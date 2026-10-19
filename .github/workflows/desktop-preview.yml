@@ -1,0 +1,54 @@
+name: Desktop preview
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: yarn
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: desktop-preview-windows
+      - run: yarn install --immutable
+      - name: Validate release metadata
+        run: node scripts/desktop/desktop-release.mjs validate
+      # The existing Tauri wrapper builds and type-checks the frontend too.
+      - name: Build unsigned Windows installer
+        run: yarn desktop:build --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Collect distribution files
+        run: node scripts/desktop/desktop-release.mjs collect x86_64-pc-windows-msvc
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-preview-windows-${{ github.sha }}
+          path: artifacts/desktop/x86_64-pc-windows-msvc/
+          if-no-files-found: error
+          retention-days: 14
