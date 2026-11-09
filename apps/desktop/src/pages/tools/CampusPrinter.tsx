@@ -6,6 +6,7 @@ import {
   nativeOs,
   type CampusPrinterSetup,
   type CampusPrinterStatus,
+  type WindowsPrinterStatus,
 } from "../../platform/desktop-bridge";
 import { accountText } from "../../features/campus-print/account";
 import { UiButton } from "../../components/ui";
@@ -25,7 +26,7 @@ const SETUP_TEXT: Record<
  * The campus printer: Core verifies the Tokyo Tech account and tries the
  * printer once each time the page opens and on Check, never in the
  * background. macOS and Linux add a system print queue; Windows adds a PDF
- * right-click entry.
+ * right-click entry and a system queue backed by the local IPP receiver.
  */
 export function CampusPrinter({
   notify,
@@ -35,8 +36,11 @@ export function CampusPrinter({
   const windows = nativeOs() === "windows";
   const [status, setStatus] = useState<CampusPrinterStatus>();
   const [checking, setChecking] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [result, setResult] = useState<string>();
+  const [adding, setAdding] = useState<"menu" | "system">();
+  const [results, setResults] = useState<{ menu?: string; system?: string }>(
+    {},
+  );
+  const [windowsStatus, setWindowsStatus] = useState<WindowsPrinterStatus>();
   const latest = useRef(0);
 
   const check = useCallback(async () => {
@@ -47,8 +51,15 @@ export function CampusPrinter({
       .catch(() => undefined);
     if (call !== latest.current) return;
     setStatus(next);
+    if (windows) {
+      const local = await desktopBridge
+        ?.campusWindowsPrinterStatus?.()
+        .catch(() => undefined);
+      if (call !== latest.current) return;
+      setWindowsStatus(local);
+    }
     setChecking(false);
-  }, []);
+  }, [windows]);
 
   useEffect(() => {
     void check();
@@ -57,11 +68,14 @@ export function CampusPrinter({
     };
   }, [check]);
 
-  const add = async () => {
-    setAdding(true);
+  const add = async (menu = windows) => {
+    const target = menu ? "menu" : "system";
+    setAdding(target);
+    const setResult = (message: string | undefined) =>
+      setResults((current) => ({ ...current, [target]: message }));
     setResult(undefined);
     try {
-      const outcome = windows
+      const outcome = menu
         ? await desktopBridge?.addCampusPrintMenu?.(
             t("tools.campusPrinter.printToCampusPrinter"),
           )
@@ -80,7 +94,8 @@ export function CampusPrinter({
       setResult(message);
       notify(message);
     } finally {
-      setAdding(false);
+      setAdding(undefined);
+      void check();
     }
   };
 
@@ -99,7 +114,41 @@ export function CampusPrinter({
                 : t("tools.campusPrinter.cannotReachThePrinter")}
           </span>
           {status && <span>{accountText(status.account)}</span>}
-          {result && <span>{result}</span>}
+          {windows && (
+            <span>{t("tools.campusPrinter.windowsSystemPrinter")}</span>
+          )}
+          {windows && (
+            <>
+              <span>
+                {t(
+                  windowsStatus?.queue === "ready"
+                    ? "tools.campusPrinter.queueReady"
+                    : windowsStatus?.queue === "not-installed"
+                      ? "tools.campusPrinter.queueMissing"
+                      : windowsStatus?.queue === "repair-required"
+                        ? "tools.campusPrinter.queueRepair"
+                        : "tools.campusPrinter.queueUnavailable",
+                )}
+              </span>
+              <span>
+                {t(
+                  windowsStatus?.receiver
+                    ? "tools.campusPrinter.receiverRunning"
+                    : "tools.campusPrinter.receiverStopped",
+                )}
+              </span>
+            </>
+          )}
+          {results.menu && (
+            <span>
+              {t("tools.campusPrinter.addPdfMenu")}: {results.menu}
+            </span>
+          )}
+          {results.system && (
+            <span>
+              {t("tools.campusPrinter.addSystemPrinter")}: {results.system}
+            </span>
+          )}
         </>
       }
       note="tools.campusPrinter.printsToTheKyoceraPrinter"
@@ -114,7 +163,7 @@ export function CampusPrinter({
           </UiButton>
           <UiButton
             className="button small"
-            disabled={!ready || adding || checking}
+            disabled={!ready || adding !== undefined || checking}
             title={t(
               windows
                 ? "tools.campusPrinter.addsTheRightClickEntry"
@@ -123,13 +172,30 @@ export function CampusPrinter({
             onClick={() => void add()}
           >
             {t(
-              adding
+              adding === (windows ? "menu" : "system")
                 ? "tools.campusPrinter.adding"
                 : windows
                   ? "tools.campusPrinter.addPdfMenu"
                   : "tools.campusPrinter.addSystemPrinter",
             )}
           </UiButton>
+          {windows && (
+            <UiButton
+              className="button small"
+              disabled={!ready || adding !== undefined || checking}
+              title={t("tools.campusPrinter.windowsSystemPrinter")}
+              onClick={() => void add(false)}
+            >
+              {t(
+                adding === "system"
+                  ? "tools.campusPrinter.adding"
+                  : windowsStatus?.queue === "repair-required" ||
+                      windowsStatus?.queue === "unavailable"
+                    ? "tools.campusPrinter.repairSystemPrinter"
+                    : "tools.campusPrinter.addSystemPrinter",
+              )}
+            </UiButton>
+          )}
         </>
       }
     />

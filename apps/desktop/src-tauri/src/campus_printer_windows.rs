@@ -1,5 +1,5 @@
 //! Printing to the campus printer on Windows: an entry in Explorer's
-//! right-click menu for PDF files starts the app with the file, and a small
+//! right-click menu for PDFs and common image files starts the app with the file, and a small
 //! window asks for copies, duplex and color before Core sends it straight
 //! to the printer over LPD.
 //!
@@ -19,11 +19,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewWindowBuilder};
+use isct_campus_menu_setup::PRINT_FLAG;
 
-const VERB_KEY: &str =
-    r"Software\Classes\SystemFileAssociations\.pdf\shell\IsctCompanionCampusPrint";
-/// The argument before the file in the verb's command line.
-const PRINT_FLAG: &str = "--campus-print";
 /// Print windows are `campus-print-<n>`; `capabilities/campus-print.json`
 /// matches the same prefix.
 const WINDOW_PREFIX: &str = "campus-print-";
@@ -110,7 +107,7 @@ fn requested_file(app: &AppHandle, label: &str) -> Result<PathBuf, CommandError>
         .ok_or_else(|| "This print window has no file.".into())
 }
 
-/// Adds the PDF right-click entry, worded `label` (the UI language), for
+/// Adds the PDF and image right-click entries, worded `label` (the UI language), for
 /// the verified student. Adding it again rewrites it, with this copy of the
 /// app as its program.
 #[tauri::command]
@@ -132,7 +129,7 @@ pub async fn add_campus_print_menu(
     ) {
         return Ok(CampusPrinterSetup::Account { account });
     }
-    let outcome = match register(&label) {
+    let outcome = match crate::campus_menu_install_windows::install(&app, label).await {
         Ok(()) => CampusPrinterSetup::Added,
         Err(error) => {
             log::warn!("[campus-printer] the right-click entry was not added: {error}");
@@ -141,20 +138,6 @@ pub async fn add_campus_print_menu(
     };
     log::info!("[campus-printer] menu {outcome:?}");
     Ok(outcome)
-}
-
-fn register(label: &str) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe = exe.to_str().ok_or("the app's path is not Unicode")?;
-    let verb = windows_registry::CURRENT_USER
-        .create(VERB_KEY)
-        .map_err(|e| e.to_string())?;
-    verb.set_string("", label).map_err(|e| e.to_string())?;
-    verb.set_string("Icon", format!("\"{exe}\",0"))
-        .map_err(|e| e.to_string())?;
-    verb.create("command")
-        .and_then(|command| command.set_string("", format!("\"{exe}\" {PRINT_FLAG} \"%1\"")))
-        .map_err(|e| e.to_string())
 }
 
 /// What the print window shows before printing.

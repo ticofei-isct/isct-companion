@@ -408,6 +408,10 @@ export type PrinterAccount =
   | { kind: "not-student-id" }
   | { kind: "needs-attention" }
   | { kind: "unverified" };
+export type WindowsPrinterStatus = {
+  queue: "not-installed" | "ready" | "repair-required" | "unavailable";
+  receiver: boolean;
+};
 export type CampusPrinterStatus = {
   account: PrinterAccount;
   reach: "reachable" | "unreachable";
@@ -655,10 +659,11 @@ export interface DesktopBridge {
   ): Promise<CampusWifiOutcome>;
   /** The verified student ID and whether the printer answers, found once. */
   campusPrinterStatus?(): Promise<CampusPrinterStatus>;
-  /** macOS and Linux: adds the InstitutePrinter queue behind the system's
-   * administrator prompt, which shows `prompt` on macOS. */
+  campusWindowsPrinterStatus?(): Promise<WindowsPrinterStatus>;
+  /** Adds or repairs the platform system printer behind its administrator
+   * prompt, which shows `prompt` on macOS. */
   installCampusPrinter?(prompt: string): Promise<CampusPrinterSetup>;
-  /** Windows: adds `label` to File Explorer's PDF right-click menu. */
+  /** Windows: adds `label` to File Explorer's PDF and image right-click menus. */
   addCampusPrintMenu?(label: string): Promise<CampusPrinterSetup>;
   /** Windows print window: its file and this device's look. */
   campusPrintRequest?(): Promise<CampusPrintRequest>;
@@ -896,6 +901,7 @@ export function createTauriDesktopBridge(
     },
     schoolCredentialStatus: () => result("school_credential_status"),
     campusPrinterStatus: () => result("campus_printer_status"),
+    campusWindowsPrinterStatus: () => result("campus_windows_printer_status"),
     installCampusPrinter: (prompt) =>
       result("install_campus_printer", { prompt }),
     addCampusPrintMenu: (label) => result("add_campus_print_menu", { label }),

@@ -56,7 +56,7 @@ function adopt(request: CampusPrintRequest) {
 }
 
 /**
- * The Windows print window, opened from File Explorer's PDF right-click
+ * The Windows print window, opened from File Explorer's PDF/image right-click
  * entry: copies, sides and color, then one send. Core bills the verified
  * student ID; this window never names one.
  */

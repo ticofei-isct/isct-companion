@@ -8,9 +8,13 @@ use school_web::SchoolWebController;
 use secrets::OsSecretVault;
 
 mod agent_server;
+#[cfg(windows)]
+mod campus_menu_install_windows;
 mod campus_printer;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod campus_printer_cups;
+#[cfg(target_os = "windows")]
+mod campus_printer_ipp_windows;
 #[cfg(windows)]
 mod campus_printer_windows;
 #[cfg(target_os = "macos")]
@@ -391,6 +395,10 @@ pub fn run() {
             campus_printer_cups::install_campus_printer,
             #[cfg(windows)]
             campus_printer_windows::add_campus_print_menu,
+            #[cfg(target_os = "windows")]
+            campus_printer_ipp_windows::install_campus_printer,
+            #[cfg(windows)]
+            campus_printer_ipp_windows::campus_windows_printer_status,
             #[cfg(windows)]
             campus_printer_windows::campus_print_request,
             #[cfg(windows)]
@@ -521,6 +529,8 @@ pub fn run() {
             // After the main window exists: the initial focus fact and event
             // delivery both refer to it.
             core_ports::DesktopRuntime::start(app.handle());
+            #[cfg(target_os = "windows")]
+            campus_printer_ipp_windows::resume(app.handle());
             // Started by the PDF right-click entry with no app running.
             #[cfg(windows)]
             if let Some(file) = campus_printer_windows::print_request(std::env::args_os()) {
@@ -551,6 +561,10 @@ pub fn run() {
                         let code = code.unwrap_or(0);
                         tauri::async_runtime::spawn(async move {
                             let drained = tokio::time::timeout(core_ports::EXIT_TIMEOUT, async {
+                                #[cfg(target_os = "windows")]
+                                app.state::<campus_printer_ipp_windows::PrintServer>()
+                                    .shutdown()
+                                    .await;
                                 cloud_sync::CloudSync::changed(&app).await;
                                 if let Some(access) = app.try_state::<agent_server::AgentAccess>() {
                                     access.shutdown().await;

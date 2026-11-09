@@ -1,5 +1,5 @@
 use crate::require_local_main;
-use crate::{coded, shell, CommandError};
+use crate::{CommandError, coded, shell};
 use app_core::notification::NotificationContent;
 #[cfg(target_os = "windows")]
 use tauri::Manager;
@@ -111,6 +111,19 @@ async fn show(app: &tauri::AppHandle, content: &NotificationContent) -> Result<(
     })
     .await
     .map_err(|error| format!("notification task failed: {error}"))??)
+}
+
+pub(crate) async fn notify_campus_printer_failure(app: &tauri::AppHandle, body: String) {
+    let content = match NotificationContent::new("校内打印", body) {
+        Ok(content) => content,
+        Err(error) => {
+            log::warn!("[campus-printer] could not create failure notification: {error}");
+            return;
+        }
+    };
+    if let Err(error) = show(app, &content).await {
+        log::warn!("[campus-printer] could not show failure notification: {error}");
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

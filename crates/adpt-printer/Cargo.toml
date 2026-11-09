@@ -9,6 +9,9 @@ publish = false
 # The LPD client, PJL header and document upload are Windows only.
 [target.'cfg(windows)'.dependencies]
 serde = { version = "1", features = ["derive"] }
+# Decode common raster formats and render them into a PDF page before LPD send.
+image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
+printpdf = { version = "0.12.8", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
 # RFC 1179 clients send from a port below 1024; std cannot bind before connecting.
 socket2 = "0.6"
 
