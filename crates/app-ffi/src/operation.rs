@@ -81,6 +81,9 @@ pub enum OperationResult {
     CampusMapSearch {
         search: CampusMapSearch,
     },
+    CampusPrint {
+        result: crate::CampusPrintResult,
+    },
     Document {
         value: JsonValue,
     },

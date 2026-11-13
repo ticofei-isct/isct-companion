@@ -1,4 +1,4 @@
-//! The campus printer (lpd://172.20.83.212/kyocera), desktop only.
+//! The campus printer (lpd://172.20.83.212/kyocera): the desktops and Android.
 //!
 //! The printer bills each job to the student ID in the LPD user field and
 //! authenticates nothing, so what Core guarantees is where the ID comes
@@ -11,7 +11,10 @@
 //!
 //! Shells do the platform part: on macOS they run the root
 //! installer Core hands them (`CupsInstall`) behind the system's admin prompt; on
-//! Windows Core sends the file itself (`Core::campus_print`).
+//! Windows Core sends the file itself (`Core::campus_print`), or the PDF
+//! Windows rendered for the system queue (`ipp`); on Android Core sends the
+//! PDF the system rendered for the app's print service
+//! (`Core::campus_print_rendered`).
 
 use crate::school_auth::SchoolAuthProfile;
 use crate::school_session::WebStop;
@@ -20,6 +23,19 @@ use adpt_printer::StudentId;
 use serde::Serialize;
 use std::net::SocketAddr;
 use std::time::Duration;
+
+#[cfg(windows)]
+pub mod ipp;
+
+#[cfg(any(windows, target_os = "android"))]
+enum PrintDocument {
+    #[cfg(windows)]
+    File(std::path::PathBuf),
+    Rendered {
+        bytes: Vec<u8>,
+        title: String,
+    },
+}
 
 /// The account whose name is the student ID.
 const STUDENT_ACCOUNT: SchoolAuthProfile = SchoolAuthProfile::TokyoTech;
@@ -104,8 +120,9 @@ pub struct CupsInstall {
     pub args: [String; 2],
 }
 
-/// How a print from the Windows print window ended.
-#[cfg(windows)]
+/// How a print ended: from the Windows print window or system queue, or
+/// from Android's print service.
+#[cfg(any(windows, target_os = "android"))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum CampusPrintOutcome {
@@ -132,8 +149,8 @@ pub enum CampusPrintOutcome {
     Uncertain { printed: u32 },
 }
 
-#[cfg(windows)]
-pub use adpt_printer::document::PrintOptions;
+#[cfg(any(windows, target_os = "android"))]
+pub use adpt_printer::{document::PrintOptions, pjl};
 
 impl Core {
     /// What the printer setting shows when it opens or the person clicks
@@ -177,6 +194,30 @@ impl Core {
         path: std::path::PathBuf,
         options: PrintOptions,
     ) -> CampusPrintOutcome {
+        self.print_document(PrintDocument::File(path), options)
+            .await
+    }
+
+    /// Sends a PDF the system rendered for the app's print service, billed
+    /// to the verified student ID, one upload per copy. `title` is the
+    /// job's name at the printer.
+    #[cfg(target_os = "android")]
+    pub async fn campus_print_rendered(
+        &self,
+        bytes: Vec<u8>,
+        title: String,
+        options: PrintOptions,
+    ) -> CampusPrintOutcome {
+        self.print_document(PrintDocument::Rendered { bytes, title }, options)
+            .await
+    }
+
+    #[cfg(any(windows, target_os = "android"))]
+    async fn print_document(
+        &self,
+        input: PrintDocument,
+        options: PrintOptions,
+    ) -> CampusPrintOutcome {
         use crate::runtime_tasks::RuntimeTaskError;
         use adpt_printer::{document, lpd};
         let account = self.campus_printer_account().await;
@@ -192,7 +233,19 @@ impl Core {
             .tasks()
             .run(async move {
                 tokio::task::spawn_blocking(move || {
-                    let sent = document::print(adpt_printer::ADDRESS, &student, &path, &options);
+                    let sent = match input {
+                        #[cfg(windows)]
+                        PrintDocument::File(path) => {
+                            document::print(adpt_printer::ADDRESS, &student, &path, &options)
+                        }
+                        PrintDocument::Rendered { bytes, title } => document::print_bytes(
+                            adpt_printer::ADDRESS,
+                            &student,
+                            &bytes,
+                            &title,
+                            &options,
+                        ),
+                    };
                     log::info!("[campus-printer] print {sent:?}");
                     sent
                 })

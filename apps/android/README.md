@@ -50,6 +50,7 @@ UniFFI checks signatures when the library loads.
 | `core/KeystoreVault.kt` | `NativeVault`: secrets sealed with an Android Keystore AES-GCM key, kept on this device |
 | `core/NotificationScheduler.kt` | Schedules Core's `notificationPlan` as alarms (64 pending at most) |
 | `core/DriveTokens.kt` | `NativeDriveTokens`: drive.appdata tokens from Google Identity's authorization API; Core owns every Drive request |
+| `CampusPrintService.kt` | The campus printer as a system print service: every app's print dialog lists it, the system renders the PDF, Core verifies the student ID and sends it over LPD |
 | `BackgroundWake.kt` | The WorkManager wake that runs Core's `backgroundWake` out of front |
 | `features/*` | 今日 (class stack, exams and the quarter's assignments) · 時間割 (week picker, session marks, quarter .ics) · 授業 (wide windows) · ウェブ · 設定 (school accounts with the OTP authenticator setup, notifications, study profile, data updates, backup, ウェブ, reset), course and assignment pages |
 | `features/map` | The campus map: a MapLibre `MapView` over OpenFreeMap's base map (OpenStreetMap data; no key, no Google Play services) drawing Core's map page. Core owns the page (`campusMapOpen`, `campusMapSend`, `campusMapSearch`, `campusMapClose`), as on iOS: what is selected (one way in by stable id for taps, marks, search and course rooms), which building and floor the visible part of the map brings into focus, the card and its maps links (the `mapsApp` setting, Google on Android until chosen) and where the camera goes. `FloorMapView.kt` paints each scene by role in theme colours (one GeoJSON source and style layer per role, line widths in metres, MapLibre's own symbol collision), reports the part of the map the controls leave visible and tells its own framings from the person's moves; `CampusMapScreen.kt` holds the one bottom panel that search, its results and the place card share, the level picker and the position button. Opened full screen from a course's rooms, 今日's next class, or 今日's map button to browse; the blue dot is asked for when the person taps the position button. `yarn sdk:android` builds the SDK with the `campus-map` feature |
@@ -72,6 +73,12 @@ UniFFI checks signatures when the library loads.
   window size (iOS moves it to the leading edge in a wide one) and its card
   folds in one step rather than following the finger; the position button
   follows the person until they move the map, with no heading mode.
+- The campus printer is in every app's system print dialog
+  (`CampusPrintService.kt`), with nothing to set up: Android enables the
+  print service on install. A job is billed to the student ID of the saved
+  Tokyo Tech Portal account and needs ScienceTokyo Wi-Fi; a failure is the
+  system's print notification, with its retry. iOS has no print service an
+  app can provide.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
 - The quarter export is a share button in the 時間割 header rather than a long

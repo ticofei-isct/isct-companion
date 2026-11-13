@@ -1936,6 +1936,76 @@ checks:
       - apps/desktop/src/pages/tools/CampusPrinter.tsx
     verified: null
 
+  - id: DESKTOP-CAMPUS-PRINTER-WINDOWS-QUEUE
+    area: desktop
+    title: The Windows system printer sends any app's print to the campus printer
+    persona: masters-student
+    preconditions: |
+      A Windows 11 desktop build of this commit (then a Windows 10 22H2 one),
+      the Tokyo Tech Portal account of a master's student saved in
+      学校アカウント, administrator approval, a Word or PowerPoint file and a
+      photo, ScienceTokyo Wi-Fi, and access to the print release or billing
+      page. WSL or Docker installed on one of the two machines.
+    steps:
+      - action: |
+          Open ツール → 学内プリンタ, press システムプリンタを追加 and approve
+          the administrator prompt; then run
+          `netsh int ipv4 show excludedportrange protocol=tcp` and compare it
+          with the port in Settings → Printers & scanners → the queue's port.
+        reason: |
+          Windows queries the receiver while it installs the IPP class-driver
+          queue, so only a real install shows the attributes are enough. The
+          port must lie in 21000–28999 and outside every excluded range, or
+          a reboot can take it away.
+      - action: |
+          Print the Word file (two copies, collate unchecked, two-sided,
+          colour) and the photo from Photos, then watch the Windows print
+          list and check the billing page.
+        reason: |
+          Windows renders each app's output to PDF only through its own class
+          driver. The jobs must leave the Windows list within seconds (the
+          printer gives no feedback, so the queue never waits for it), the
+          uncollated request must still print, and both must be billed to
+          the student and wait for release.
+      - action: |
+          Quit IsctCompanion from the tray, print the photo again, then start
+          the app.
+        reason: |
+          With no receiver Windows marks the job failed. Once the app runs,
+          the job must be sent again rather than dropped; only a job that
+          still fails after that becomes a system notification.
+      - action: |
+          Leave ScienceTokyo Wi-Fi, print once more, and read the
+          notification.
+        reason: |
+          Delivery fails after Windows has finished the job, so the only
+          report is the app's own notification, in the UI language.
+      - action: |
+          Reboot the machine with WSL or Docker, start the app, and print.
+        reason: |
+          Hyper-V reserves port ranges at boot; the saved port must still
+          bind and the queue must print without a repair.
+    observe: |
+      The 学内プリンタ page, Printers & scanners and its print list, the
+      excluded port ranges, the system notifications, and the billing page.
+    expected: |
+      The queue installs on both Windows versions on a port outside the
+      dynamic range; prints from Word and Photos are billed to the student
+      and leave the Windows list at once; a job printed while the app was
+      closed is sent when it starts; an off-campus delivery failure is a
+      notification; printing works after a reboot with WSL or Docker.
+    why_manual: |
+      Needs administrator approval, the Windows spooler and IPP class
+      driver, real apps' print dialogs, the campus network and the
+      printer's billing. Option parsing and the queue cleanup rules are in
+      crates/app-core/src/tests/campus_printer_ipp.rs and
+      apps/desktop/src-tauri/src/tests/campus_printer_queue.rs.
+    covers:
+      - apps/desktop/src-tauri/src/plugins/campus_printer/queue.rs
+      - crates/app-core/src/campus_printer/ipp.rs
+      - crates/app-core/src/campus_printer/ipp/attributes.rs
+    verified: null
+
   - id: DESKTOP-CAMPUS-PRINTER-WINDOWS
     area: desktop
     title: Windows PDF right-click entry prints with the chosen options
@@ -1947,7 +2017,7 @@ checks:
     steps:
       - action: |
           Open a File Explorer window on the PDF's folder, then open 工具 →
-          校内打印机 and press 添加 PDF 右键菜单.
+          校内打印机 and press 添加右键菜单.
         reason: |
           The entry goes under HKCU without an administrator prompt; a UAC
           prompt here means it was written somewhere it should not be. The
@@ -5447,6 +5517,67 @@ checks:
       - apps/ios/IsctCompanion/App/IsctCompanionApp.swift
       - apps/ios/IsctCompanion/Core/AppModel.swift
       - apps/ios/IsctCompanion/Features/Settings/SettingsScreen.swift
+    verified: null
+
+  - id: ANDROID-CAMPUS-PRINT
+    area: native
+    title: Android's print dialog sends any app's print to the campus printer
+    persona: masters-student
+    preconditions: |
+      An arm64 Android phone with a build of this commit, freshly installed
+      and never opened; the Tokyo Tech Portal account of a master's student;
+      ScienceTokyo Wi-Fi; a multi-page PDF and a photo; and access to the
+      print release or billing page.
+    steps:
+      - action: |
+          Before opening the app, open the PDF in Files or Drive, choose
+          Print and open the printer list.
+        reason: |
+          Android enables an installed print service by itself, so 学内プリンタ
+          must be listed with no setup; a missing printer means the service's
+          manifest entry is wrong. Selecting it must offer A4 and Letter,
+          black and white or colour, and one- or two-sided.
+      - action: Print it, then read the system's print notification.
+        reason: |
+          No Tokyo Tech account is saved, so Core must send nothing and the
+          job must fail with the text that asks to save the account first.
+      - action: |
+          Save the Tokyo Tech Portal account in the app, leave the app, and
+          print pages 2-3 of the PDF: two copies, two-sided, black and white.
+          Then print the photo from Photos in colour, and check the billing
+          page and the sheets.
+        reason: |
+          The system renders each app's output to PDF with the page range
+          applied, and the service starts the session with no activity in
+          front. Only the real printer shows that an upload from a source
+          port above 1023 (an app cannot bind a lower one) is accepted, that
+          each job is billed to the student's ID and waits for release, that
+          one upload per copy gives exactly two copies, and that the PJL
+          duplex and colour settings are honoured.
+      - action: |
+          Switch to mobile data (or ScienceTokyoX), print once more, read the
+          notification, rejoin ScienceTokyo Wi-Fi and tap its retry.
+        reason: |
+          Off the printer's network the job must fail within seconds naming
+          ScienceTokyo Wi-Fi, and the system's own retry must send it once
+          the network is back.
+    observe: |
+      The system print dialog and its printer list, the print notifications,
+      the printer's release panel and the billing page.
+    expected: |
+      学内プリンタ is in every app's print dialog without setup; with a saved
+      account, prints from a document app and from Photos are billed to the
+      student and print with the chosen copies, sides and colour; without an
+      account or off the campus Wi-Fi the job fails with the reason and can
+      be retried.
+    why_manual: |
+      Needs the system print spooler and real apps' print dialogs on a
+      device, the campus network and the printer's billing. The LPD and PJL
+      bytes are tested in crates/adpt-printer/src/tests.
+    covers:
+      - apps/android/app/src/main/java/app/isctcompanion/CampusPrintService.kt
+      - apps/android/app/src/main/res/xml/campus_print_service.xml
+      - crates/app-ffi/src/campus_print.rs
     verified: null
 
   - id: IOS-SETTINGS-PAGES

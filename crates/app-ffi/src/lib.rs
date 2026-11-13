@@ -13,12 +13,16 @@
 uniffi::setup_scaffolding!();
 #[cfg(target_os = "android")]
 mod android_tls;
+mod campus_print;
 mod diagnostics;
 mod error;
 mod json;
 pub mod types {
     include!(concat!(env!("OUT_DIR"), "/contracts.rs"));
 }
+pub use campus_print::{
+    campus_print_document_limit, CampusPrintJob, CampusPrintResult, CampusPrintSides,
+};
 pub use diagnostics::export_application_logs;
 pub use error::SdkError;
 pub use json::JsonValue;
