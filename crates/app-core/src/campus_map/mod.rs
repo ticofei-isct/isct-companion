@@ -293,8 +293,9 @@ pub struct CampusMapStackFloor {
     pub walkways: Vec<CampusMapPolygon>,
     /// The selected room.
     pub highlight: Vec<CampusMapPolygon>,
-    /// The building's entrances on this floor, raised with it: a building
-    /// on a slope is entered on more than one floor.
+    /// The building's entrances on this floor, while it is the floor picked
+    /// (empty on the others): a building on a slope is entered on more than
+    /// one floor, each shown with its own.
     pub entrances: Vec<CampusMapStackEntrance>,
 }
 

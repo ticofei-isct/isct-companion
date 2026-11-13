@@ -337,32 +337,52 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         .stack
         .iter()
         .any(|floor| floor.shown && !floor.highlight.is_empty()));
-    // Each entrance stands on the floor the export puts it on; W9 is
-    // entered on more than one floor, and none is flattened to the ground.
-    for entrance in &map.export.buildings[w9].entrances {
-        let on = scene
-            .stack
-            .iter()
-            .filter(|floor| {
-                floor
-                    .entrances
-                    .iter()
-                    .any(|at| at.entrance_id == entrance.id)
-            })
-            .map(|floor| floor.level_id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            on,
-            entrance.level_id.as_deref().into_iter().collect::<Vec<_>>()
-        );
-    }
-    assert!(
+    // Only the floor picked carries entrances, exactly the ones the export
+    // puts on it; picking another floor shows that floor's own. W9 is
+    // entered on more than one floor.
+    let entrances_on = |scene: &CampusMapScene| {
         scene
             .stack
             .iter()
             .filter(|floor| !floor.entrances.is_empty())
-            .count()
-            > 1
+            .map(|floor| {
+                (
+                    floor.shown,
+                    floor.level_id.clone(),
+                    floor
+                        .entrances
+                        .iter()
+                        .map(|at| at.entrance_id.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = |level: &str| {
+        map.export.buildings[w9]
+            .entrances
+            .iter()
+            .filter(|entrance| entrance.level_id.as_deref() == Some(level))
+            .map(|entrance| entrance.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let shown_id = levels[shown.1].id.clone();
+    let on = entrances_on(&scene);
+    if expected(&shown_id).is_empty() {
+        assert!(on.is_empty());
+    } else {
+        assert_eq!(on, vec![(true, shown_id.clone(), expected(&shown_id))]);
+    }
+    let entered = levels
+        .iter()
+        .find(|level| level.id != shown_id && !expected(&level.id).is_empty())
+        .expect("W9 is entered on another floor too");
+    page.apply(CampusMapIntent::Level {
+        id: entered.id.clone(),
+    });
+    assert_eq!(
+        entrances_on(&page.render(1)),
+        vec![(true, entered.id.clone(), expected(&entered.id))]
     );
     // Nothing of a floor is left on the ground: no plan layers, and no
     // marks; the entrances are on their floors.

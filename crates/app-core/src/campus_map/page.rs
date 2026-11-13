@@ -391,8 +391,11 @@ impl Page {
                         .entrances
                         .iter()
                         .enumerate()
+                        // Only the floor picked shows its entrances: the
+                        // stack is read one floor at a time.
                         .filter(|(_, entrance)| {
-                            entrance.level_id.as_deref() == Some(source.id.as_str())
+                            level == shown
+                                && entrance.level_id.as_deref() == Some(source.id.as_str())
                         })
                         .map(|(index, entrance)| CampusMapStackEntrance {
                             entrance_id: entrance.id.clone(),

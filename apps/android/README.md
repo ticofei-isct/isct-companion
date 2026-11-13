@@ -87,8 +87,8 @@ UniFFI checks signatures when the library loads.
   floor forward, and a room string that names a room on the plans (from a
   course or 今日) opens the map as the stack straight away. In the stack the entrances keep the flat
   map's icons, drawn over the map at the height of the floor the export puts
-  each on (WL2 is entered on 1F and 3F), and left out where a floor above
-  would hide it; nothing else is marked.
+  each on, and only on the floor picked (WL2 shows one entrance on 1F, the
+  other on 3F); nothing else is marked.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
 - The quarter export is a share button in the 時間割 header rather than a long
