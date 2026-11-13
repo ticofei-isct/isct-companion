@@ -91,7 +91,9 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * In the stack, Core's floors become slabs raised to their height
  * (MapLibre's fill extrusion), seen at an angle: the floor picked solid,
  * the ones below it faint, the ones above it barely there so they never
- * hide it, and the selected room raised in the accent on whichever floor. */
+ * hide it, and the selected room raised in the accent on whichever floor.
+ * Each entrance stands as a short column on the floor the plans put it on,
+ * so a building on a slope shows the doors it has upstairs. */
 @Composable
 fun FloorMapView(
     scene: CampusMapScene?,
@@ -332,8 +334,10 @@ private class FloorPainter(private val view: MapView) {
                 val point = live.projection.toScreenLocation(at)
                 val reach = TOUCH_DP * density
                 val touched = RectF(point.x - reach, point.y - reach, point.x + reach, point.y + reach)
-                // The topmost mark under the finger, as drawn.
-                val mark = live.queryRenderedFeatures(touched, LIT_LABELS, ENTRANCES, AMENITIES, LABELS).firstOrNull()
+                // The topmost mark under the finger, as drawn; in the stack,
+                // an entrance's column.
+                val mark = live.queryRenderedFeatures(touched, STACK_ENTRANCES).firstOrNull()
+                    ?: live.queryRenderedFeatures(touched, LIT_LABELS, ENTRANCES, AMENITIES, LABELS).firstOrNull()
                 val entrance = mark?.takeIf { it.hasNonNullValueForProperty("entrance") }?.getStringProperty("entrance")
                 val unit = mark?.takeIf { it.hasNonNullValueForProperty("unit") }?.getStringProperty("unit")
                 when {
@@ -628,6 +632,23 @@ private class FloorPainter(private val view: MapView) {
         style.addLayer(slab(STACK_SHOWN, SHOWN, 0.95f))
         style.addLayer(slab(STACK_HIGHLIGHT, HIGHLIGHT, 1f))
         style.addLayer(slab(STACK_ABOVE, ABOVE, 0.08f))
+        // Entrances: solid columns on their floors, the one picked in ink.
+        style.addLayer(
+            FillExtrusionLayer(STACK_ENTRANCES, STACK)
+                .withFilter(Expression.eq(Expression.get("place"), Expression.literal(ENTRANCE)))
+                .withProperties(
+                    PropertyFactory.fillExtrusionColor(
+                        Expression.switchCase(
+                            Expression.eq(Expression.get("selected"), Expression.literal(true)),
+                            Expression.color(palette.ink.toArgb()),
+                            Expression.color(palette.accent.toArgb()),
+                        ),
+                    ),
+                    PropertyFactory.fillExtrusionBase(Expression.get("base")),
+                    PropertyFactory.fillExtrusionHeight(Expression.get("top")),
+                    PropertyFactory.fillExtrusionOpacity(1f),
+                ),
+        )
     }
 
     private fun source(role: CampusMapLayerRole) = "campus-${role.name.lowercase()}"
@@ -799,21 +820,43 @@ private class FloorPainter(private val view: MapView) {
                 add(floor.rooms, "room", SLAB_M)
             }
             add(floor.highlight, "highlight", HIGHLIGHT_M, HIGHLIGHT)
+            for (entrance in floor.entrances) {
+                features += slabFeature(
+                    square(entrance.point, ENTRANCE_SIDE_M), floor.baseM, floor.baseM + ENTRANCE_M, "entrance", ENTRANCE,
+                    extra = ""","entrance":${JSONObject.quote(entrance.entranceId)},"selected":${entrance.selected}""",
+                )
+            }
         }
         style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
     }
 
-    private fun slabFeature(rings: List<List<CampusMapPoint>>, base: Double, top: Double, part: String, place: String) =
+    private fun slabFeature(
+        rings: List<List<CampusMapPoint>>,
+        base: Double,
+        top: Double,
+        part: String,
+        place: String,
+        extra: String = "",
+    ) =
         buildString {
             append("""{"type":"Feature","properties":{"base":""").append(base)
             append(""","top":""").append(top)
-            append(""","part":"$part","place":"$place"},"geometry":{"type":"Polygon","coordinates":[""")
+            append(""","part":"$part","place":"$place"""").append(extra)
+            append("""},"geometry":{"type":"Polygon","coordinates":[""")
             rings.forEachIndexed { index, ring ->
                 if (index > 0) append(',')
                 path(ring)
             }
             append("]}}")
         }
+
+    /** A square `side` metres across around `at`, closed. */
+    private fun square(at: CampusMapPoint, side: Double): List<List<CampusMapPoint>> {
+        val lat = side / 2 / METRES_PER_DEGREE
+        val lng = side / 2 / (METRES_PER_DEGREE * cos(Math.toRadians(at.latitude)))
+        fun corner(x: Double, y: Double) = CampusMapPoint(latitude = at.latitude + y, longitude = at.longitude + x)
+        return listOf(listOf(corner(-lng, -lat), corner(lng, -lat), corner(lng, lat), corner(-lng, lat), corner(-lng, -lat)))
+    }
 
     /** An icon on a 28 dp disc with a hairline rim, as iOS draws them. */
     private fun round(drawable: Int, tint: Int, fill: Int, palette: Palette): Bitmap {
@@ -869,6 +912,12 @@ private class FloorPainter(private val view: MapView) {
         const val SHOWN = "shown"
         const val HIGHLIGHT = "highlight"
         const val ABOVE = "above"
+        const val ENTRANCE = "entrance"
+        const val STACK_ENTRANCES = "campus-stack-entrances"
+        /** An entrance's column: its side and height, metres. */
+        const val ENTRANCE_SIDE_M = 2.0
+        const val ENTRANCE_M = 4.0
+        const val METRES_PER_DEGREE = 111_320.0
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
         /** Slab heights in the stack, metres: the floor, its spaces, and the
