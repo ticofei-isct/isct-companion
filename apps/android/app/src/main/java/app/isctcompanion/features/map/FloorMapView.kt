@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.RectF
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas as Drawing
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -30,7 +31,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -136,6 +142,7 @@ fun FloorMapView(
     val painter = remember { FloorPainter(view) }
     var placed by remember { mutableStateOf(emptyList<PlacedMark>()) }
     var raised by remember { mutableStateOf(emptyList<RaisedEntrance>()) }
+    var rooms by remember { mutableStateOf(emptyList<RaisedRoom>()) }
     SideEffect {
         painter.insets = insets
         painter.onCamera = onCamera
@@ -143,6 +150,7 @@ fun FloorMapView(
         painter.onSelect = onSelect
         painter.onPlaced = { placed = it }
         painter.onRaised = { raised = it }
+        painter.onRooms = { rooms = it }
     }
     MapLifecycle(view)
     DisposableEffect(view) {
@@ -156,7 +164,50 @@ fun FloorMapView(
             update = { painter.show(scene, palette, dark, chrome, canFrame, showsPosition, follows, animates) },
         )
         SpokenMarks(placed, onSelect)
+        RaisedRooms(rooms)
         RaisedEntrances(raised, onSelect)
+    }
+}
+
+/** The selected room on one floor of the stack, in screen pixels: each
+ * outer ring at its floor and at the room's top, the same points lifted. */
+private data class RaisedRoom(val floors: List<List<Offset>>, val tops: List<List<Offset>>, val shown: Boolean)
+
+/** The selected room, drawn over the map rather than in it. MapLibre's
+ * extrusions share one depth buffer, so a floor in front hides a room
+ * behind it whatever the layer order; laid over the map, the room shows
+ * where it sits in the building through every floor. Each room is one
+ * layer, so its faces overlap without darkening, at full strength on the
+ * floor picked and at [OTHER_FLOOR_ROOM_OPACITY] on any other. */
+@Composable
+private fun RaisedRooms(rooms: List<RaisedRoom>) {
+    val accent = Theme.colors.accent
+    val edge = Theme.colors.surface
+    for (room in rooms) {
+        Drawing(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = if (room.shown) SHOWN_ROOM_OPACITY else OTHER_FLOOR_ROOM_OPACITY
+                    compositingStrategy = CompositingStrategy.Offscreen
+                },
+        ) {
+            fun ring(points: List<Offset>) = Path().apply {
+                moveTo(points[0].x, points[0].y)
+                for (point in points.drop(1)) lineTo(point.x, point.y)
+                close()
+            }
+            for ((floor, top) in room.floors.zip(room.tops)) {
+                drawPath(ring(floor), accent)
+                for (i in floor.indices) {
+                    val j = (i + 1) % floor.size
+                    drawPath(ring(listOf(floor[i], floor[j], top[j], top[i])), accent)
+                }
+                val roof = ring(top)
+                drawPath(roof, accent)
+                drawPath(roof, edge, style = Stroke(width = 1.5.dp.toPx()))
+            }
+        }
     }
 }
 
@@ -248,6 +299,11 @@ private fun SpokenMarks(placed: List<PlacedMark>, onSelect: (CampusMapPlace) -> 
 
 /** The side of a mark's box for a screen reader, the size of its icon. */
 private const val SPOKEN_DP = 28
+/** The selected room on the floor picked. */
+private const val SHOWN_ROOM_OPACITY = 0.9f
+/** The selected room on a floor other than the one picked, above or below
+ * it: one value for both. */
+private const val OTHER_FLOOR_ROOM_OPACITY = 0.5f
 
 /** A `MapView` is told each lifecycle step by its host; this one lives as
  * long as the map page's destination. */
@@ -320,6 +376,7 @@ private class FloorPainter(private val view: MapView) {
     var onPlaced: (List<PlacedMark>) -> Unit = {}
     /** The stack's entrances in view and where their floors put them. */
     var onRaised: (List<RaisedEntrance>) -> Unit = {}
+    var onRooms: (List<RaisedRoom>) -> Unit = {}
 
     private val context = view.context
     private val density = context.resources.displayMetrics.density
@@ -496,6 +553,7 @@ private class FloorPainter(private val view: MapView) {
         val current = scene
         if (current == null || !current.stacked) {
             onRaised(emptyList())
+            onRooms(emptyList())
             return
         }
         val projection = map.projection
@@ -518,6 +576,17 @@ private class FloorPainter(private val view: MapView) {
             }
         }
         onRaised(raised)
+        val rooms = current.stack.mapNotNull { floor ->
+            val rings = floor.highlight.mapNotNull { it.rings.firstOrNull()?.takeIf { ring -> ring.size >= 3 } }
+            if (rings.isEmpty()) return@mapNotNull null
+            fun at(height: Double): List<List<Offset>>? = rings.map { ring ->
+                ring.map { point -> lifted(point, height)?.let { Offset(it.x, it.y) } ?: return null }
+            }
+            val floors = at(floor.baseM + SLAB_M) ?: return@mapNotNull null
+            val tops = at(floor.baseM + HIGHLIGHT_M) ?: return@mapNotNull null
+            RaisedRoom(floors, tops, floor.shown)
+        }
+        onRooms(rooms)
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
@@ -703,14 +772,13 @@ private class FloorPainter(private val view: MapView) {
         // The stack. Each layer has one opacity, so the floors are split by
         // where they sit against the floor picked: below it faint, so they
         // show through; above it nearly clear, so the floor picked is never
-        // behind them; the selected room solid on top of all.
+        // behind them. The selected room is laid over the map (`RaisedRooms`).
         style.addSource(GeoJsonSource(STACK))
         val color = Expression.match(
             Expression.get("part"),
             Expression.color(palette.surface2.toArgb()),
             Expression.stop("outline", Expression.color(palette.surface.toArgb())),
             Expression.stop("walkway", Expression.color(palette.accentSoft.toArgb())),
-            Expression.stop("highlight", Expression.color(palette.accent.toArgb())),
         )
         fun slab(id: String, place: String, opacity: Float) = FillExtrusionLayer(id, STACK)
             .withFilter(Expression.eq(Expression.get("place"), Expression.literal(place)))
@@ -723,8 +791,6 @@ private class FloorPainter(private val view: MapView) {
         style.addLayer(slab(STACK_BELOW, BELOW, 0.3f))
         style.addLayer(slab(STACK_SHOWN, SHOWN, 0.95f))
         style.addLayer(slab(STACK_ABOVE, ABOVE, 0.18f))
-        style.addLayer(slab(STACK_HIGHLIGHT_OTHER, HIGHLIGHT_OTHER, OTHER_FLOOR_ROOM_OPACITY))
-        style.addLayer(slab(STACK_HIGHLIGHT, HIGHLIGHT, 1f))
     }
 
     private fun source(role: CampusMapLayerRole) = "campus-${role.name.lowercase()}"
@@ -895,11 +961,7 @@ private class FloorPainter(private val view: MapView) {
                 add(floor.walkways, "walkway", SLAB_M)
                 add(floor.rooms, "room", SLAB_M)
             }
-            // The selected room is solid on the floor picked and half seen on
-            // any other floor, above or below alike. Its layers come after
-            // every floor's (each extrusion layer is laid over the ones
-            // before it), so no floor ever hides where the room is.
-            add(floor.highlight, "highlight", HIGHLIGHT_M, if (place == SHOWN) HIGHLIGHT else HIGHLIGHT_OTHER)
+            // The selected room is drawn over the map (`RaisedRooms`).
         }
         style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
     }
@@ -964,16 +1026,9 @@ private class FloorPainter(private val view: MapView) {
         const val STACK = "campus-stack"
         const val STACK_BELOW = "campus-stack-below"
         const val STACK_SHOWN = "campus-stack-shown"
-        const val STACK_HIGHLIGHT = "campus-stack-highlight"
         const val STACK_ABOVE = "campus-stack-above"
         const val BELOW = "below"
         const val SHOWN = "shown"
-        const val HIGHLIGHT = "highlight"
-        const val HIGHLIGHT_OTHER = "highlight-other"
-        const val STACK_HIGHLIGHT_OTHER = "campus-stack-highlight-other"
-        /** The selected room on a floor other than the one picked, above or
-         * below it: one value for both. */
-        const val OTHER_FLOOR_ROOM_OPACITY = 0.5f
         const val ABOVE = "above"
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
