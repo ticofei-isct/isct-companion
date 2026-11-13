@@ -72,6 +72,13 @@ UniFFI checks signatures when the library loads.
   window size (iOS moves it to the leading edge in a wide one) and its card
   folds in one step rather than following the finger; the position button
   follows the person until they move the map, with no heading mode.
+- This fork adds what iOS does not have: directions inside a building and a
+  stacked view of its floors. Core infers a walk network from the floor plans
+  (`campus_map/route.rs`; the export has no doors, so a route is a
+  suggestion and the card says so) and answers `Directions` with legs, floor
+  changes and worded steps, step-free on request. `Stack` raises the
+  building's floors as MapLibre fill extrusions seen at an angle, with the
+  route as a strip on each floor and a column where it changes floor.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
 - The quarter export is a share button in the 時間割 header rather than a long

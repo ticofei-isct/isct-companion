@@ -39,6 +39,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.isctcompanion.R
 import app.isctcompanion.core.CampusMapCamera
+import app.isctcompanion.core.CampusMapDirections
 import app.isctcompanion.core.CampusMapFraming
 import app.isctcompanion.core.CampusMapLayer
 import app.isctcompanion.core.CampusMapLayerRole
@@ -46,7 +47,10 @@ import app.isctcompanion.core.CampusMapMark
 import app.isctcompanion.core.CampusMapMarkKind
 import app.isctcompanion.core.CampusMapPlace
 import app.isctcompanion.core.CampusMapPoint
+import app.isctcompanion.core.CampusMapPolygon
 import app.isctcompanion.core.CampusMapScene
+import app.isctcompanion.core.CampusMapStackFloor
+import app.isctcompanion.core.CampusMapVia
 import app.isctcompanion.design.LocalReducedMotion
 import app.isctcompanion.design.Palette
 import app.isctcompanion.design.Theme
@@ -63,6 +67,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
@@ -71,6 +76,7 @@ import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -83,7 +89,11 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * drawn over it by role. Core decides every layer and mark; this view only
  * paints them with MapLibre (one GeoJSON source and style layer per role,
  * line widths in metres, MapLibre's own symbol collision) and reports the
- * part of the map the controls leave visible. */
+ * part of the map the controls leave visible.
+ *
+ * A route is a line on the floor shown. In the stack, Core's floors become
+ * slabs raised to their height (MapLibre's fill extrusion), the route a
+ * strip on each and a column where it changes floor, seen at an angle. */
 @Composable
 fun FloorMapView(
     scene: CampusMapScene?,
@@ -287,6 +297,11 @@ private class FloorPainter(private val view: MapView) {
     /** Per role, the ids of Core's layers its source holds now. */
     private val drawn = HashMap<CampusMapLayerRole, List<String>>()
     private var drawnMarks: List<CampusMapMark>? = null
+    /** The route and the stack as last drawn, and whether the camera is
+     * tilted for the stack. */
+    private var drawnRoute: Pair<CampusMapDirections?, String?>? = null
+    private var drawnStack: List<CampusMapStackFloor>? = null
+    private var tilted = false
 
     init {
         // A framing needs a real size, which a new map does not have yet.
@@ -410,6 +425,20 @@ private class FloorPainter(private val view: MapView) {
         showPosition(map, style)
         drawLayers(style, scene?.layers.orEmpty())
         drawMarks(style, scene?.marks.orEmpty())
+        val stacked = scene?.stacked == true
+        drawStack(style, if (stacked) scene?.stack.orEmpty() else emptyList())
+        drawRoute(style, scene?.directions, if (stacked) null else scene?.levelId, stacked)
+        tilt(map, stacked)
+    }
+
+    /** The stack is seen at an angle and may be turned and tilted; a single
+     * floor is seen from above, as on iOS. A framing for the stack keeps
+     * the angle (`applyFraming`). */
+    private fun tilt(map: MapLibreMap, stacked: Boolean) {
+        if (stacked == tilted) return
+        tilted = stacked
+        map.uiSettings.isTiltGesturesEnabled = stacked
+        if (!stacked) map.animateCamera(CameraUpdateFactory.tiltTo(0.0), FRAMING_MS)
     }
 
     // Camera
@@ -432,10 +461,13 @@ private class FloorPainter(private val view: MapView) {
         // The camera is Core's now, not the blue dot's.
         if (positionStyle != null) runCatching { map.locationComponent.cameraMode = CameraMode.NONE }
         val bounds = framing.bounds
-        val update = CameraUpdateFactory.newLatLngBounds(
-            LatLngBounds.from(bounds.north, bounds.east, bounds.south, bounds.west),
-            inset.left + margin, inset.top + margin, inset.right + margin, inset.bottom + margin,
-        )
+        val box = LatLngBounds.from(bounds.north, bounds.east, bounds.south, bounds.west)
+        val padding = intArrayOf(inset.left + margin, inset.top + margin, inset.right + margin, inset.bottom + margin)
+        // The stack keeps its angle and turn; a floor is framed from above.
+        val tiltTo = if (tilted) STACK_TILT else 0.0
+        val update = map.getCameraForLatLngBounds(box, padding, map.cameraPosition.bearing, tiltTo)
+            ?.let(CameraUpdateFactory::newCameraPosition)
+            ?: CameraUpdateFactory.newLatLngBounds(box, padding[0], padding[1], padding[2], padding[3])
         if (animated) map.animateCamera(update, FRAMING_MS) else map.moveCamera(update)
         // A framing of what is already in view moves nothing and so never
         // comes to rest; once a real move would have started, it is
@@ -538,6 +570,20 @@ private class FloorPainter(private val view: MapView) {
         style.addLayer(fill(CampusMapLayerRole.HIGHLIGHT, palette.accent.copy(alpha = 0.35f).toArgb()))
         style.addLayer(stroke(CampusMapLayerRole.HIGHLIGHT, palette.accent.toArgb(), 2f))
 
+        // The route on the floor shown: a line over the plan, a mark where
+        // it changes floor.
+        style.addSource(GeoJsonSource(ROUTE))
+        style.addLayer(
+            LineLayer(ROUTE_LINE, ROUTE)
+                .withFilter(Expression.eq(Expression.geometryType(), Expression.literal("LineString")))
+                .withProperties(
+                    PropertyFactory.lineColor(palette.accent.toArgb()),
+                    PropertyFactory.lineWidth(ROUTE_DP),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                ),
+        )
+
         // MapLibre places the symbols of upper layers first, so the order
         // is the priority: room labels give way to amenities, and entrances
         // and the selected room always show.
@@ -576,6 +622,48 @@ private class FloorPainter(private val view: MapView) {
                     PropertyFactory.textColor(palette.accent.toArgb()),
                     PropertyFactory.textAllowOverlap(true),
                 ),
+        )
+        style.addLayer(
+            SymbolLayer(ROUTE_CLIMBS, ROUTE)
+                .withFilter(Expression.eq(Expression.geometryType(), Expression.literal("Point")))
+                .withProperties(
+                    PropertyFactory.iconImage(Expression.get("icon")),
+                    PropertyFactory.iconAllowOverlap(true),
+                ),
+        )
+        style.addImage(CLIMB_STAIRS, round(R.drawable.campus_map_stairs, palette.accentInk.toArgb(), palette.accent.toArgb(), palette))
+        style.addImage(CLIMB_LIFT, round(R.drawable.campus_map_elevator, palette.accentInk.toArgb(), palette.accent.toArgb(), palette))
+
+        // The stack: floors raised to their height, the floor picked solid
+        // and the others faint, so the ones below show through; the route
+        // over them. Fill extrusions hide each other by depth.
+        style.addSource(GeoJsonSource(STACK))
+        style.addSource(GeoJsonSource(STACK_ROUTE))
+        val part = Expression.get("part")
+        val color = Expression.match(
+            part,
+            Expression.color(palette.surface2.toArgb()),
+            Expression.stop("outline", Expression.color(palette.surface.toArgb())),
+            Expression.stop("walkway", Expression.color(palette.accentSoft.toArgb())),
+            Expression.stop("highlight", Expression.color(palette.accent.toArgb())),
+        )
+        fun slab(id: String, shown: Boolean, opacity: Float) = FillExtrusionLayer(id, STACK)
+            .withFilter(Expression.eq(Expression.get("shown"), Expression.literal(shown)))
+            .withProperties(
+                PropertyFactory.fillExtrusionColor(color),
+                PropertyFactory.fillExtrusionBase(Expression.get("base")),
+                PropertyFactory.fillExtrusionHeight(Expression.get("top")),
+                PropertyFactory.fillExtrusionOpacity(opacity),
+            )
+        style.addLayer(slab(STACK_FAINT, false, 0.35f))
+        style.addLayer(slab(STACK_SOLID, true, 0.9f))
+        style.addLayer(
+            FillExtrusionLayer(STACK_ROUTE, STACK_ROUTE).withProperties(
+                PropertyFactory.fillExtrusionColor(palette.accent.toArgb()),
+                PropertyFactory.fillExtrusionBase(Expression.get("base")),
+                PropertyFactory.fillExtrusionHeight(Expression.get("top")),
+                PropertyFactory.fillExtrusionOpacity(1f),
+            ),
         )
     }
 
@@ -718,6 +806,116 @@ private class FloorPainter(private val view: MapView) {
         onPlaced(placed)
     }
 
+    // Route and stack
+
+    /** The route's legs on the floor shown as lines, with a mark where it
+     * changes floor; in the stack, a strip a little above each floor and a
+     * column for each change. */
+    private fun drawRoute(style: Style, directions: CampusMapDirections?, levelId: String?, stacked: Boolean) {
+        val key = directions to (if (stacked) STACK else levelId)
+        if (drawnRoute == key) return
+        drawnRoute = key
+        val route = (directions as? CampusMapDirections.Route)?.route
+        val flat = mutableListOf<String>()
+        val raised = mutableListOf<String>()
+        if (route != null && !stacked) {
+            for (leg in route.legs) {
+                if (leg.levelId != levelId || leg.points.size < 2) continue
+                flat += buildString {
+                    append("""{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":""")
+                    path(leg.points)
+                    append("}}")
+                }
+            }
+            for (climb in route.climbs) {
+                if (climb.fromLevelId != levelId && climb.toLevelId != levelId) continue
+                val icon = if (climb.via == CampusMapVia.LIFT) CLIMB_LIFT else CLIMB_STAIRS
+                flat += """{"type":"Feature","properties":{"icon":"$icon"},"geometry":{"type":"Point","coordinates":[${climb.point.longitude},${climb.point.latitude}]}}"""
+            }
+        }
+        if (route != null && stacked) {
+            for (leg in route.legs) {
+                for (pair in leg.points.zipWithNext()) {
+                    strip(pair.first, pair.second)?.let {
+                        raised += raisedFeature(it, leg.baseM + SLAB_M, leg.baseM + SLAB_M + ROUTE_RISE_M)
+                    }
+                }
+            }
+            for (climb in route.climbs) {
+                val low = minOf(climb.fromBaseM, climb.toBaseM)
+                val high = maxOf(climb.fromBaseM, climb.toBaseM)
+                raised += raisedFeature(square(climb.point, COLUMN_M), low + SLAB_M, high + SLAB_M + ROUTE_RISE_M)
+            }
+        }
+        style.getSourceAs<GeoJsonSource>(ROUTE)?.setGeoJson(collection(flat))
+        style.getSourceAs<GeoJsonSource>(STACK_ROUTE)?.setGeoJson(collection(raised))
+    }
+
+    /** Each floor as slabs: its outline as the floor, its spaces a little
+     * above it (walls are left out: lines cannot be raised), the selected
+     * room taller. */
+    private fun drawStack(style: Style, floors: List<CampusMapStackFloor>) {
+        if (drawnStack == floors) return
+        drawnStack = floors
+        val features = mutableListOf<String>()
+        for (floor in floors) {
+            fun add(polygons: List<CampusMapPolygon>, part: String, top: Double) {
+                for (shape in polygons) {
+                    val ring = shape.rings.firstOrNull() ?: continue
+                    if (ring.size < 3) continue
+                    features += raisedFeature(shape.rings, floor.baseM, floor.baseM + top, part, floor.shown)
+                }
+            }
+            add(floor.outline, "outline", OUTLINE_M)
+            add(floor.walkways, "walkway", SLAB_M)
+            add(floor.rooms, "room", SLAB_M)
+            add(floor.highlight, "highlight", HIGHLIGHT_M)
+        }
+        style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
+    }
+
+    private fun raisedFeature(
+        rings: List<List<CampusMapPoint>>,
+        base: Double,
+        top: Double,
+        part: String = "route",
+        shown: Boolean = true,
+    ): String = buildString {
+        append("""{"type":"Feature","properties":{"base":""").append(base)
+        append(""","top":""").append(top)
+        append(""","part":"$part","shown":$shown},"geometry":{"type":"Polygon","coordinates":[""")
+        rings.forEachIndexed { index, ring ->
+            if (index > 0) append(',')
+            path(ring)
+        }
+        append("]}}")
+    }
+
+    /** A strip [ROUTE_WIDTH_M] wide along one segment of a leg. */
+    private fun strip(from: CampusMapPoint, to: CampusMapPoint): List<List<CampusMapPoint>>? {
+        val perLng = METRES_PER_DEGREE * cos(Math.toRadians(from.latitude))
+        val dx = (to.longitude - from.longitude) * perLng
+        val dy = (to.latitude - from.latitude) * METRES_PER_DEGREE
+        val length = hypot(dx, dy)
+        if (length < 0.05) return null
+        val half = ROUTE_WIDTH_M / 2
+        val nx = -dy / length * half
+        val ny = dx / length * half
+        fun shift(at: CampusMapPoint, sign: Int) =
+            CampusMapPoint(latitude = at.latitude + sign * ny / METRES_PER_DEGREE, longitude = at.longitude + sign * nx / perLng)
+        val ring = listOf(shift(from, 1), shift(to, 1), shift(to, -1), shift(from, -1), shift(from, 1))
+        return listOf(ring)
+    }
+
+    /** A square `side` metres across around `at`. */
+    private fun square(at: CampusMapPoint, side: Double): List<List<CampusMapPoint>> {
+        val half = side / 2
+        val lat = half / METRES_PER_DEGREE
+        val lng = half / (METRES_PER_DEGREE * cos(Math.toRadians(at.latitude)))
+        fun corner(x: Double, y: Double) = CampusMapPoint(latitude = at.latitude + y, longitude = at.longitude + x)
+        return listOf(listOf(corner(-lng, -lat), corner(lng, -lat), corner(lng, lat), corner(-lng, lat), corner(-lng, -lat)))
+    }
+
     /** An icon on a 28 dp disc with a hairline rim, as iOS draws them. */
     private fun round(drawable: Int, tint: Int, fill: Int, palette: Palette): Bitmap {
         val side = (ICON_DP * density).roundToInt()
@@ -763,6 +961,28 @@ private class FloorPainter(private val view: MapView) {
         const val AMENITIES = "campus-amenities"
         const val ENTRANCES = "campus-entrances"
         const val LIT_LABELS = "campus-labels-lit"
+        const val ROUTE = "campus-route"
+        const val ROUTE_LINE = "campus-route-line"
+        const val ROUTE_CLIMBS = "campus-route-climbs"
+        const val CLIMB_STAIRS = "campus-climb-stairs"
+        const val CLIMB_LIFT = "campus-climb-lift"
+        const val STACK = "campus-stack"
+        const val STACK_FAINT = "campus-stack-faint"
+        const val STACK_SOLID = "campus-stack-solid"
+        const val STACK_ROUTE = "campus-stack-route"
+        /** The route's line on a floor, in dp. */
+        const val ROUTE_DP = 5f
+        /** How the stack is seen: degrees from straight down. */
+        const val STACK_TILT = 55.0
+        /** Slab heights in the stack, metres: the floor, its spaces, the
+         * selected room; the route strip above the spaces. */
+        const val OUTLINE_M = 0.3
+        const val SLAB_M = 0.6
+        const val HIGHLIGHT_M = 2.4
+        const val ROUTE_RISE_M = 0.5
+        const val ROUTE_WIDTH_M = 1.4
+        const val COLUMN_M = 1.6
+        const val METRES_PER_DEGREE = 111_320.0
         const val ENTRANCE_IMAGE = "campus-entrance"
         const val ENTRANCE_SELECTED_IMAGE = "campus-entrance-selected"
         /** OpenFreeMap's quiet styles, and two fonts its glyph server has. */
