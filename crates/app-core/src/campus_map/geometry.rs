@@ -9,12 +9,21 @@ const METRES_PER_DEGREE_LAT: f64 = 110_574.0;
 const METRES_PER_DEGREE_LNG: f64 = 111_320.0;
 
 /// `point` in metres east and north of `origin`.
-fn metres(origin: Position, point: Position) -> (f64, f64) {
+pub(super) fn metres(origin: Position, point: Position) -> (f64, f64) {
     let scale = origin[1].to_radians().cos() * METRES_PER_DEGREE_LNG;
     (
         (point[0] - origin[0]) * scale,
         (point[1] - origin[1]) * METRES_PER_DEGREE_LAT,
     )
+}
+
+/// The point `xy` metres east and north of `origin`: [`metres`] undone.
+pub(super) fn position(origin: Position, xy: (f64, f64)) -> Position {
+    let scale = origin[1].to_radians().cos() * METRES_PER_DEGREE_LNG;
+    [
+        origin[0] + xy.0 / scale,
+        origin[1] + xy.1 / METRES_PER_DEGREE_LAT,
+    ]
 }
 
 /// Even-odd ray cast; a point on an edge may land either side.

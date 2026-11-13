@@ -273,3 +273,116 @@ fn old_camera_reports_and_floor_changes_never_replace_the_selection() {
     assert_eq!(card.title.as_deref(), Some("W9-202"));
     assert_eq!(page.marked_level(), None);
 }
+
+#[test]
+#[ignore = "needs the published export in ISCT_CAMPUS_MAP_EXPORT"]
+fn directions_belong_to_the_room_they_lead_to() {
+    let map = map();
+    let w9 = building(&map, W9);
+    let preferences = Preferences {
+        english: false,
+        maps: MapsApp::Google,
+    };
+    let mut page = Page::open(map.clone(), preferences, Some("W9-324"));
+    assert!(page.card().is_some_and(|card| card.routable));
+    let before = page.framing.as_ref().map_or(0, |framing| framing.key);
+    page.apply(CampusMapIntent::Directions {
+        entrance_id: None,
+        step_free: true,
+    });
+    let scene = page.scene(1).expect("the route changes the scene");
+    let Some(CampusMapDirections::Route { route }) = scene.directions else {
+        panic!("W9-324 has a step-free route");
+    };
+    assert!(route.step_free);
+    assert!(matches!(
+        route.steps.first(),
+        Some(CampusMapRouteStep::Enter { .. })
+    ));
+    assert!(matches!(
+        route.steps.last(),
+        Some(CampusMapRouteStep::Arrive { title, .. }) if title == "W9-324"
+    ));
+    assert!(route.steps.iter().all(|step| !matches!(
+        step,
+        CampusMapRouteStep::Climb {
+            via: CampusMapVia::Stairs,
+            ..
+        }
+    )));
+    // The route is framed, and its first floor shows once the camera lands.
+    assert!(page
+        .framing
+        .as_ref()
+        .is_some_and(|framing| framing.key > before));
+    let first = route.legs.first().expect("a first leg");
+    let arrival = page.arrival.flatten();
+    assert_eq!(arrival.map(|(building, _)| building), Some(w9));
+    assert_eq!(
+        arrival.map(|(building, level)| map.export.buildings[building].levels[level]
+            .id
+            .clone()),
+        Some(first.level_id.clone())
+    );
+
+    // Another selection ends the route; coming back does not revive it.
+    page.apply(CampusMapIntent::Select {
+        place: CampusMapPlace::Building { id: W9.to_owned() },
+    });
+    assert_eq!(page.render(1).directions, None);
+    page.apply(CampusMapIntent::Choose { index: 0 });
+    assert_eq!(page.render(1).directions, None);
+}
+
+#[test]
+#[ignore = "needs the published export in ISCT_CAMPUS_MAP_EXPORT"]
+fn a_stack_lifts_every_floor_off_the_ground() {
+    let map = map();
+    let w9 = building(&map, W9);
+    let preferences = Preferences {
+        english: false,
+        maps: MapsApp::Google,
+    };
+    let mut page = Page::open(map.clone(), preferences, Some("W9-324"));
+    let framing = page.framing.clone().expect("a framing");
+    page.apply(CampusMapIntent::Camera {
+        camera: camera(&view(rect(framing.bounds)), false),
+        framing: framing.key,
+    });
+    let shown = page.floor.expect("the room's floor");
+    page.apply(CampusMapIntent::Stack { on: true });
+    let scene = page.render(1);
+    assert!(scene.stacked);
+    let levels = &map.export.buildings[w9].levels;
+    assert_eq!(scene.stack.len(), levels.len());
+    // Lowest first, each above the last, the shown floor solid.
+    assert!(scene
+        .stack
+        .windows(2)
+        .all(|pair| pair[0].base_m < pair[1].base_m));
+    assert_eq!(scene.stack.iter().filter(|floor| floor.shown).count(), 1);
+    assert!(scene
+        .stack
+        .iter()
+        .any(|floor| floor.shown && floor.level_id == levels[shown.1].id));
+    assert!(scene.stack.iter().any(|floor| !floor.highlight.is_empty()));
+    // Nothing of a floor is left on the ground: no plan layers, and no
+    // marks but the entrances.
+    assert!(scene.layers.iter().all(|layer| matches!(
+        layer.role,
+        CampusMapLayerRole::Footprint | CampusMapLayerRole::FocusedFootprint
+    )));
+    assert!(scene
+        .marks
+        .iter()
+        .all(|mark| matches!(mark.kind, CampusMapMarkKind::Entrance { .. })));
+    // Turning the stack is no reason to leave the building.
+    let campus = map.campus_bounds("ookayama").expect("ookayama");
+    page.apply(CampusMapIntent::Camera {
+        camera: camera(&view(campus), true),
+        framing: page.framing.as_ref().map_or(0, |framing| framing.key),
+    });
+    assert_eq!(page.floor.map(|(building, _)| building), Some(w9));
+    page.apply(CampusMapIntent::Stack { on: false });
+    assert!(!page.render(1).stacked);
+}
