@@ -8,7 +8,11 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.RectF
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -21,7 +25,11 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -74,6 +82,7 @@ import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -92,7 +101,8 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * (MapLibre's fill extrusion), seen at an angle: the floor picked solid,
  * the ones below it faint, the ones above it barely there so they never
  * hide it, and the selected room raised in the accent on whichever floor.
- * It shows where a room is, not the way there: nothing else is marked. */
+ * The entrances keep the flat map's icons, drawn over the map where their
+ * floor stands, so a building on a slope shows its doors upstairs. */
 @Composable
 fun FloorMapView(
     scene: CampusMapScene?,
@@ -124,12 +134,14 @@ fun FloorMapView(
     }
     val painter = remember { FloorPainter(view) }
     var placed by remember { mutableStateOf(emptyList<PlacedMark>()) }
+    var raised by remember { mutableStateOf(emptyList<RaisedEntrance>()) }
     SideEffect {
         painter.insets = insets
         painter.onCamera = onCamera
         painter.onTap = onTap
         painter.onSelect = onSelect
         painter.onPlaced = { placed = it }
+        painter.onRaised = { raised = it }
     }
     MapLifecycle(view)
     DisposableEffect(view) {
@@ -143,6 +155,45 @@ fun FloorMapView(
             update = { painter.show(scene, palette, dark, chrome, canFrame, showsPosition, follows, animates) },
         )
         SpokenMarks(placed, onSelect)
+        RaisedEntrances(raised, onSelect)
+    }
+}
+
+/** An entrance in the stack and where its floor puts it on screen. */
+private data class RaisedEntrance(val id: String, val name: String?, val selected: Boolean, val x: Int, val y: Int)
+
+/** The stack's entrances, as the flat map draws them: MapLibre's icons lie
+ * on the ground, so these are the same disc and icon laid over the map at
+ * the height of the floor each is on. A tap picks the entrance as on the
+ * flat map, and a screen reader reads its name. */
+@Composable
+private fun RaisedEntrances(raised: List<RaisedEntrance>, onSelect: (CampusMapPlace) -> Unit) {
+    val half = with(LocalDensity.current) { (SPOKEN_DP.dp / 2).roundToPx() }
+    val colors = Theme.colors
+    for (entrance in raised) {
+        key(entrance.id) {
+            val spoken = entrance.name ?: t("campusMap.entrance")
+            Box(
+                Modifier
+                    .offset { IntOffset(entrance.x - half, entrance.y - half) }
+                    .size(SPOKEN_DP.dp)
+                    .clip(CircleShape)
+                    .background(if (entrance.selected) colors.accent else colors.surface)
+                    .border(1.dp, colors.line, CircleShape)
+                    .clickable(role = Role.Button) { onSelect(CampusMapPlace.Entrance(entrance.id)) }
+                    .semantics {
+                        contentDescription = spoken
+                        selected = entrance.selected
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painterResource(R.drawable.campus_map_entrance), null,
+                    tint = if (entrance.selected) colors.accentInk else colors.accent,
+                    modifier = Modifier.size((SPOKEN_DP - 10).dp),
+                )
+            }
+        }
     }
 }
 
@@ -266,6 +317,8 @@ private class FloorPainter(private val view: MapView) {
     var onSelect: (CampusMapPlace) -> Unit = {}
     /** The marks in the visible part and where they are, for a screen reader. */
     var onPlaced: (List<PlacedMark>) -> Unit = {}
+    /** The stack's entrances in view and where their floors put them. */
+    var onRaised: (List<RaisedEntrance>) -> Unit = {}
 
     private val context = view.context
     private val density = context.resources.displayMetrics.density
@@ -315,6 +368,8 @@ private class FloorPainter(private val view: MapView) {
             cameraMoving = true
             if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) framingActive = false
         }
+        // The stack's entrances follow the camera as it moves.
+        map.addOnCameraMoveListener { raise() }
         map.addOnCameraIdleListener {
             cameraMoving = false
             // Anything but this painter's own framing is the person's move,
@@ -427,6 +482,39 @@ private class FloorPainter(private val view: MapView) {
         drawMarks(style, scene?.marks.orEmpty())
         val stacked = scene?.stacked == true
         drawStack(style, if (stacked) scene?.stack.orEmpty() else emptyList())
+        raise()
+    }
+
+    /** Where each stacked entrance shows: its point on the ground, lifted up
+     * the screen by its floor's height. A height seen at the camera's tilt
+     * covers its sine in ground metres, at the scale the screen has across
+     * that point's own row. */
+    private fun raise() {
+        val map = map ?: return
+        val current = scene
+        if (current == null || !current.stacked) {
+            onRaised(emptyList())
+            return
+        }
+        val projection = map.projection
+        val tilt = sin(Math.toRadians(map.cameraPosition.tilt))
+        val inset = insets()
+        val raised = current.stack.flatMap { floor ->
+            floor.entrances.mapNotNull { entrance ->
+                val at = LatLng(entrance.point.latitude, entrance.point.longitude)
+                val ground = projection.toScreenLocation(at)
+                val across = projection.fromScreenLocation(PointF(ground.x + SCALE_PX, ground.y))
+                val metres = at.distanceTo(across)
+                if (metres <= 0.0) return@mapNotNull null
+                val x = ground.x
+                val y = ground.y - (floor.baseM + SLAB_M) * tilt * SCALE_PX / metres
+                val inside = x >= inset.left && x <= view.width - inset.right &&
+                    y >= inset.top && y <= view.height - inset.bottom
+                if (!inside) return@mapNotNull null
+                RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, x.roundToInt(), y.roundToInt())
+            }
+        }
+        onRaised(raised)
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
@@ -881,6 +969,8 @@ private class FloorPainter(private val view: MapView) {
         const val OUTLINE_M = 0.3
         const val SLAB_M = 0.6
         const val HIGHLIGHT_M = 3.0
+        /** Pixels across a row that measure the screen's scale there. */
+        const val SCALE_PX = 50f
         const val ENTRANCE_IMAGE = "campus-entrance"
         const val ENTRANCE_SELECTED_IMAGE = "campus-entrance-selected"
         /** OpenFreeMap's quiet styles, and two fonts its glyph server has. */

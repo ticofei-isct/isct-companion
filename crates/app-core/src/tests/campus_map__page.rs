@@ -337,9 +337,35 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         .stack
         .iter()
         .any(|floor| floor.shown && !floor.highlight.is_empty()));
+    // Each entrance stands on the floor the export puts it on; W9 is
+    // entered on more than one floor, and none is flattened to the ground.
+    for entrance in &map.export.buildings[w9].entrances {
+        let on = scene
+            .stack
+            .iter()
+            .filter(|floor| {
+                floor
+                    .entrances
+                    .iter()
+                    .any(|at| at.entrance_id == entrance.id)
+            })
+            .map(|floor| floor.level_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            on,
+            entrance.level_id.as_deref().into_iter().collect::<Vec<_>>()
+        );
+    }
+    assert!(
+        scene
+            .stack
+            .iter()
+            .filter(|floor| !floor.entrances.is_empty())
+            .count()
+            > 1
+    );
     // Nothing of a floor is left on the ground: no plan layers, and no
-    // marks, entrances included: the stack shows where a room is, not the
-    // way in.
+    // marks; the entrances are on their floors.
     assert!(scene.layers.iter().all(|layer| matches!(
         layer.role,
         CampusMapLayerRole::Footprint | CampusMapLayerRole::FocusedFootprint
