@@ -6,7 +6,7 @@
 //! camera, a floor picked or the card folded change the floor at most, never
 //! the selection. Only another selection, or closing the card, replaces it.
 use super::{
-    export::{AmenityCategory, LineTone, UnitCategory},
+    export::{LineTone, UnitCategory},
     geometry::{self, Viewport},
     map::{maps_url, point, polygon, rect_bounds, Map, MapsApp, Match, Target, TAP_SLOP_POINTS},
     search::Found,
@@ -386,7 +386,6 @@ impl Page {
                     outline: source.outline.iter().map(polygon).collect(),
                     rooms: Vec::new(),
                     walkways: Vec::new(),
-                    stairs: Vec::new(),
                     highlight: Vec::new(),
                     entrances: record
                         .entrances
@@ -430,34 +429,6 @@ impl Page {
                     } else {
                         floor.rooms.push(shape);
                     }
-                }
-                // Like the entrances, the stairs show on the floor picked
-                // only: each stair mark, and the middle of a stair hall the
-                // export puts no mark in.
-                if level == shown {
-                    let marks: Vec<_> = map
-                        .amenities_by_level
-                        .get(&source.id)
-                        .into_iter()
-                        .flatten()
-                        .map(|amenity| &map.export.amenities[*amenity])
-                        .filter(|amenity| amenity.category == AmenityCategory::Stairs)
-                        .map(|amenity| amenity.point)
-                        .collect();
-                    let unmarked = map
-                        .units_by_level
-                        .get(&source.id)
-                        .into_iter()
-                        .flatten()
-                        .map(|unit| &map.export.units[*unit])
-                        .filter(|unit| unit.category == UnitCategory::Stairs)
-                        .filter(|unit| {
-                            !marks
-                                .iter()
-                                .any(|at| geometry::polygon_contains(&unit.polygon, *at))
-                        })
-                        .map(|unit| unit.center);
-                    floor.stairs = marks.iter().copied().chain(unmarked).map(point).collect();
                 }
                 floor
             })

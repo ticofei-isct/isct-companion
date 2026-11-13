@@ -143,7 +143,6 @@ fun FloorMapView(
     var placed by remember { mutableStateOf(emptyList<PlacedMark>()) }
     var raised by remember { mutableStateOf(emptyList<RaisedEntrance>()) }
     var rooms by remember { mutableStateOf(emptyList<RaisedRoom>()) }
-    var stairs by remember { mutableStateOf(emptyList<IntOffset>()) }
     SideEffect {
         painter.insets = insets
         painter.onCamera = onCamera
@@ -152,7 +151,6 @@ fun FloorMapView(
         painter.onPlaced = { placed = it }
         painter.onRaised = { raised = it }
         painter.onRooms = { rooms = it }
-        painter.onStairs = { stairs = it }
     }
     MapLifecycle(view)
     DisposableEffect(view) {
@@ -167,7 +165,6 @@ fun FloorMapView(
         )
         SpokenMarks(placed, onSelect)
         RaisedRooms(rooms)
-        RaisedStairs(stairs)
         RaisedEntrances(raised, onSelect)
     }
 }
@@ -210,33 +207,6 @@ private fun RaisedRooms(rooms: List<RaisedRoom>) {
                 drawPath(roof, accent)
                 drawPath(roof, edge, style = Stroke(width = 1.5.dp.toPx()))
             }
-        }
-    }
-}
-
-/** The stairs on the floor picked, as the flat map marks them: the same
- * disc and icon, at the floor's height. A screen reader reads each. */
-@Composable
-private fun RaisedStairs(stairs: List<IntOffset>) {
-    val half = with(LocalDensity.current) { (SPOKEN_DP.dp / 2).roundToPx() }
-    val colors = Theme.colors
-    val spoken = t("campusMap.amenity.stairs")
-    for (at in stairs) {
-        Box(
-            Modifier
-                .offset { IntOffset(at.x - half, at.y - half) }
-                .size(SPOKEN_DP.dp)
-                .clip(CircleShape)
-                .background(colors.surface)
-                .border(1.dp, colors.line, CircleShape)
-                .semantics { contentDescription = spoken },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painterResource(R.drawable.campus_map_stairs), null,
-                tint = colors.ink,
-                modifier = Modifier.size((SPOKEN_DP - 10).dp),
-            )
         }
     }
 }
@@ -407,7 +377,6 @@ private class FloorPainter(private val view: MapView) {
     /** The stack's entrances in view and where their floors put them. */
     var onRaised: (List<RaisedEntrance>) -> Unit = {}
     var onRooms: (List<RaisedRoom>) -> Unit = {}
-    var onStairs: (List<IntOffset>) -> Unit = {}
 
     private val context = view.context
     private val density = context.resources.displayMetrics.density
@@ -585,7 +554,6 @@ private class FloorPainter(private val view: MapView) {
         if (current == null || !current.stacked) {
             onRaised(emptyList())
             onRooms(emptyList())
-            onStairs(emptyList())
             return
         }
         val projection = map.projection
@@ -608,16 +576,6 @@ private class FloorPainter(private val view: MapView) {
             }
         }
         onRaised(raised)
-        onStairs(
-            current.stack.flatMap { floor ->
-                floor.stairs.mapNotNull { point ->
-                    val at = lifted(point, floor.baseM + SLAB_M) ?: return@mapNotNull null
-                    val inside = at.x >= inset.left && at.x <= view.width - inset.right &&
-                        at.y >= inset.top && at.y <= view.height - inset.bottom
-                    if (inside) IntOffset(at.x.roundToInt(), at.y.roundToInt()) else null
-                }
-            },
-        )
         val rooms = current.stack.mapNotNull { floor ->
             val rings = floor.highlight.mapNotNull { it.rings.firstOrNull()?.takeIf { ring -> ring.size >= 3 } }
             if (rings.isEmpty()) return@mapNotNull null
