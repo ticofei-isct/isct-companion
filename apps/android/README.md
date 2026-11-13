@@ -83,8 +83,8 @@ UniFFI checks signatures when the library loads.
   seen at an angle (`Stack`). Core gives each floor a height and its shapes;
   the shell raises them as MapLibre fill extrusions, the floor picked solid,
   the ones below faint and the ones above nearly clear, with the selected
-  room raised in the accent: solid on the floor picked, half seen over it
-  from a floor below (M-110 from 2F), faint on a floor above. Entering the stack brings the selected room's
+  room raised in the accent over every floor, so no floor hides where it is:
+  solid on the floor picked, half seen on any other (M-110 from 2F or B1). Entering the stack brings the selected room's
   floor forward, and a room string that names a room on the plans (from a
   course or 今日) opens the map as the stack straight away. In the stack the entrances keep the flat
   map's icons, drawn over the map at the height of the floor the export puts
