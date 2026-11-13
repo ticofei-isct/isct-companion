@@ -101,7 +101,7 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * (MapLibre's fill extrusion), seen at an angle: the floor picked solid,
  * the ones below it faint, the ones above it barely there so they never
  * hide it, and the selected room raised in the accent: solid on the floor
- * picked, as faint as its own floor otherwise.
+ * picked, half seen over it when on a floor below, faint on one above.
  * The entrances keep the flat map's icons, drawn over the map where their
  * floor stands, so a building on a slope shows its doors upstairs. */
 @Composable
@@ -722,6 +722,7 @@ private class FloorPainter(private val view: MapView) {
             )
         style.addLayer(slab(STACK_BELOW, BELOW, 0.3f))
         style.addLayer(slab(STACK_SHOWN, SHOWN, 0.95f))
+        style.addLayer(slab(STACK_HIGHLIGHT_BELOW, HIGHLIGHT_BELOW, 0.5f))
         style.addLayer(slab(STACK_HIGHLIGHT, HIGHLIGHT, 1f))
         style.addLayer(slab(STACK_ABOVE, ABOVE, 0.18f))
     }
@@ -894,10 +895,16 @@ private class FloorPainter(private val view: MapView) {
                 add(floor.walkways, "walkway", SLAB_M)
                 add(floor.rooms, "room", SLAB_M)
             }
-            // The selected room stands out solid on the floor picked; on any
-            // other floor it is as faint as that floor, so it neither floats
-            // over a floor picked below it nor shows through one above it.
-            add(floor.highlight, "highlight", HIGHLIGHT_M, if (place == SHOWN) HIGHLIGHT else place)
+            // The selected room stands out solid on the floor picked and half
+            // seen on any other, in a layer of its own so the floor picked
+            // never hides it (each extrusion layer is laid over the ones
+            // before it); above the floor picked it is as faint as its floor.
+            val room = when (place) {
+                SHOWN -> HIGHLIGHT
+                BELOW -> HIGHLIGHT_BELOW
+                else -> ABOVE
+            }
+            add(floor.highlight, "highlight", HIGHLIGHT_M, room)
         }
         style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
     }
@@ -967,6 +974,8 @@ private class FloorPainter(private val view: MapView) {
         const val BELOW = "below"
         const val SHOWN = "shown"
         const val HIGHLIGHT = "highlight"
+        const val HIGHLIGHT_BELOW = "highlight-below"
+        const val STACK_HIGHLIGHT_BELOW = "campus-stack-highlight-below"
         const val ABOVE = "above"
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
