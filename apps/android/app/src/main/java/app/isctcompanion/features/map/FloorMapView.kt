@@ -100,7 +100,8 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * In the stack, Core's floors become slabs raised to their height
  * (MapLibre's fill extrusion), seen at an angle: the floor picked solid,
  * the ones below it faint, the ones above it barely there so they never
- * hide it, and the selected room raised in the accent on whichever floor.
+ * hide it, and the selected room raised in the accent unless its floor is
+ * one of the near-clear ones above.
  * The entrances keep the flat map's icons, drawn over the map where their
  * floor stands, so a building on a slope shows its doors upstairs. */
 @Composable
@@ -893,7 +894,11 @@ private class FloorPainter(private val view: MapView) {
                 add(floor.walkways, "walkway", SLAB_M)
                 add(floor.rooms, "room", SLAB_M)
             }
-            add(floor.highlight, "highlight", HIGHLIGHT_M, HIGHLIGHT)
+            // The selected room stands out solid on the floor picked and the
+            // floors under it; above the floor picked its floor is nearly
+            // clear, and a solid room there would float in the air, so it
+            // is as faint as its floor.
+            add(floor.highlight, "highlight", HIGHLIGHT_M, if (place == ABOVE) ABOVE else HIGHLIGHT)
         }
         style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
     }
