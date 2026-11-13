@@ -6,7 +6,7 @@
 //! camera, a floor picked or the card folded change the floor at most, never
 //! the selection. Only another selection, or closing the card, replaces it.
 use super::{
-    export::{LineTone, UnitCategory},
+    export::{AmenityCategory, LineTone, UnitCategory},
     geometry::{self, Viewport},
     map::{maps_url, point, polygon, rect_bounds, Map, MapsApp, Match, Target, TAP_SLOP_POINTS},
     search::Found,
@@ -24,6 +24,9 @@ const HOME_CAMPUS: &str = "ookayama";
 /// Metres between floors in the stack: about twice as built, so the plan
 /// of each floor shows between the ones above and below it.
 const STACK_SPACING_M: f64 = 8.0;
+/// The side of the square a stair mark the plan draws no hall for takes in
+/// the stack, metres: about a flight's width.
+const STAIR_MARK_M: f64 = 3.0;
 
 /// What a page reads from the settings when it opens.
 #[derive(Clone, Copy, Debug)]
@@ -386,6 +389,7 @@ impl Page {
                     outline: source.outline.iter().map(polygon).collect(),
                     rooms: Vec::new(),
                     walkways: Vec::new(),
+                    stairs: Vec::new(),
                     highlight: Vec::new(),
                     entrances: record
                         .entrances
@@ -417,17 +421,41 @@ impl Page {
                     let shape = polygon(&record.polygon);
                     if lit.contains(unit) {
                         floor.highlight.push(shape);
+                    } else if record.category == UnitCategory::Stairs {
+                        floor.stairs.push(shape);
                     } else if matches!(
                         record.category,
                         UnitCategory::Corridor
                             | UnitCategory::ElevatorLobby
-                            | UnitCategory::Stairs
                             | UnitCategory::Lounge
                             | UnitCategory::Porch
                     ) {
                         floor.walkways.push(shape);
                     } else {
                         floor.rooms.push(shape);
+                    }
+                }
+                // A stair mark inside a stair hall is that hall; any other
+                // is a stair the plan does not draw.
+                let halls: Vec<_> = map
+                    .units_by_level
+                    .get(&source.id)
+                    .into_iter()
+                    .flatten()
+                    .map(|unit| &map.export.units[*unit])
+                    .filter(|unit| unit.category == UnitCategory::Stairs)
+                    .map(|unit| &unit.polygon)
+                    .collect();
+                for amenity in map.amenities_by_level.get(&source.id).into_iter().flatten() {
+                    let amenity = &map.export.amenities[*amenity];
+                    if amenity.category == AmenityCategory::Stairs
+                        && !halls
+                            .iter()
+                            .any(|hall| geometry::polygon_contains(hall, amenity.point))
+                    {
+                        floor
+                            .stairs
+                            .push(polygon(&geometry::square(amenity.point, STAIR_MARK_M)));
                     }
                 }
                 floor

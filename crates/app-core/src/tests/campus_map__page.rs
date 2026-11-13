@@ -337,6 +337,30 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         .stack
         .iter()
         .any(|floor| floor.shown && !floor.highlight.is_empty()));
+    // Every floor carries its stairs, picked or not: its stair halls, and a
+    // square for each stair mark outside them. W9 has both kinds.
+    for floor in &scene.stack {
+        let halls = map
+            .units_by_level
+            .get(&floor.level_id)
+            .into_iter()
+            .flatten()
+            .filter(|unit| map.export.units[**unit].category == UnitCategory::Stairs)
+            .count();
+        let marks = map
+            .amenities_by_level
+            .get(&floor.level_id)
+            .into_iter()
+            .flatten()
+            .filter(|amenity| map.export.amenities[**amenity].category == AmenityCategory::Stairs)
+            .count();
+        assert!(floor.stairs.len() >= halls && floor.stairs.len() <= halls + marks);
+        assert_eq!(floor.stairs.is_empty(), halls + marks == 0);
+    }
+    assert!(scene
+        .stack
+        .iter()
+        .any(|floor| !floor.shown && !floor.stairs.is_empty()));
     // Only the floor picked carries entrances, exactly the ones the export
     // puts on it; picking another floor shows that floor's own. W9 is
     // entered on more than one floor.

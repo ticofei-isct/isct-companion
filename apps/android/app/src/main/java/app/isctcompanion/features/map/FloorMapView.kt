@@ -779,6 +779,7 @@ private class FloorPainter(private val view: MapView) {
             Expression.color(palette.surface2.toArgb()),
             Expression.stop("outline", Expression.color(palette.surface.toArgb())),
             Expression.stop("walkway", Expression.color(palette.accentSoft.toArgb())),
+            Expression.stop("stairs", Expression.color(palette.ok.toArgb())),
         )
         fun slab(id: String, place: String, opacity: Float) = FillExtrusionLayer(id, STACK)
             .withFilter(Expression.eq(Expression.get("place"), Expression.literal(place)))
@@ -961,6 +962,9 @@ private class FloorPainter(private val view: MapView) {
                 add(floor.walkways, "walkway", SLAB_M)
                 add(floor.rooms, "room", SLAB_M)
             }
+            // Stairs on every floor, above the one picked too, so a stair
+            // reads as one shaft through the building.
+            add(floor.stairs, "stairs", STAIRS_M)
             // The selected room is drawn over the map (`RaisedRooms`).
         }
         style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
@@ -1032,11 +1036,12 @@ private class FloorPainter(private val view: MapView) {
         const val ABOVE = "above"
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
-        /** Slab heights in the stack, metres: the floor, its spaces, and the
-         * selected room, tall enough to read from any angle. */
+        /** Slab heights in the stack, metres: the floor, its spaces, the
+         * stairs, and the selected room, tall enough to read from any angle. */
         const val OUTLINE_M = 0.3
         const val SLAB_M = 0.6
         const val HIGHLIGHT_M = 3.0
+        const val STAIRS_M = 1.5
         /** Pixels across a row that measure the screen's scale there. */
         const val SCALE_PX = 50f
         const val ENTRANCE_IMAGE = "campus-entrance"

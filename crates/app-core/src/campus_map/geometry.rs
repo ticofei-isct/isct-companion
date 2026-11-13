@@ -37,6 +37,20 @@ fn ring_contains(ring: &[Position], point: Position) -> bool {
     inside
 }
 
+/// A square `side` metres across centred on `center`, as one closed ring.
+pub(super) fn square(center: Position, side: f64) -> Rings {
+    let half_lat = side / 2.0 / METRES_PER_DEGREE_LAT;
+    let half_lng = side / 2.0 / (center[1].to_radians().cos() * METRES_PER_DEGREE_LNG);
+    let [lng, lat] = center;
+    vec![vec![
+        [lng - half_lng, lat - half_lat],
+        [lng + half_lng, lat - half_lat],
+        [lng + half_lng, lat + half_lat],
+        [lng - half_lng, lat + half_lat],
+        [lng - half_lng, lat - half_lat],
+    ]]
+}
+
 /// Inside the outer ring and outside every hole.
 pub(super) fn polygon_contains(rings: &Rings, point: Position) -> bool {
     let mut rings = rings.iter();
