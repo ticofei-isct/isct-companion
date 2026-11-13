@@ -41,7 +41,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Directions
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.MyLocation
@@ -50,7 +49,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -91,23 +89,19 @@ import app.isctcompanion.LocalModel
 import app.isctcompanion.LocalNavigator
 import app.isctcompanion.core.CampusMapCandidate
 import app.isctcompanion.core.CampusMapCard
-import app.isctcompanion.core.CampusMapDirections
 import app.isctcompanion.core.CampusMapIntent
 import app.isctcompanion.core.CampusMapLevel
 import app.isctcompanion.core.CampusMapLink
 import app.isctcompanion.core.CampusMapOpening
-import app.isctcompanion.core.CampusMapRouteStep
 import app.isctcompanion.core.CampusMapScene
 import app.isctcompanion.core.CampusMapSearch
 import app.isctcompanion.core.CampusMapSearchResult
-import app.isctcompanion.core.CampusMapVia
 import app.isctcompanion.design.ActionButton
 import app.isctcompanion.design.ButtonLevel
 import app.isctcompanion.design.Theme
 import app.isctcompanion.design.t
 import app.isctcompanion.design.tabular
 import kotlinx.coroutines.channels.Channel
-import kotlin.math.roundToInt
 
 /** The page's control size, the gap between controls and its side inset. */
 private val Control = 44.dp
@@ -394,11 +388,8 @@ fun CampusMapScreen(room: String?) {
                         }
                         card != null && cardExpanded -> CardDetails(
                             card,
-                            scene?.directions,
                             openLink = { openInMaps(context, it.url) },
                             choose = { send(CampusMapIntent.Choose(it.toUInt())) },
-                            route = { stepFree -> send(CampusMapIntent.Directions(null, stepFree)) },
-                            endRoute = { send(CampusMapIntent.EndDirections) },
                         )
                     }
                 }
@@ -541,20 +532,9 @@ private fun CardHeader(card: CampusMapCard, expanded: Boolean, fold: (Boolean) -
 
 /** Details below the place header, while the card is unfolded. */
 @Composable
-private fun CardDetails(
-    card: CampusMapCard,
-    directions: CampusMapDirections?,
-    openLink: (CampusMapLink) -> Unit,
-    choose: (Int) -> Unit,
-    route: (stepFree: Boolean) -> Unit,
-    endRoute: () -> Unit,
-) {
+private fun CardDetails(card: CampusMapCard, openLink: (CampusMapLink) -> Unit, choose: (Int) -> Unit) {
     Column(
-        Modifier
-            // A route's steps scroll within the panel; the map stays in view.
-            .heightIn(max = 320.dp)
-            .verticalScroll(rememberScrollState())
-            .padding(start = Theme.cardPadding, end = Theme.cardPadding, bottom = Theme.cardPadding),
+        Modifier.padding(start = Theme.cardPadding, end = Theme.cardPadding, bottom = Theme.cardPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // The building unless it is the title, the floor, the campus.
@@ -568,76 +548,9 @@ private fun CardDetails(
         } else if (card.noFloorPlans) {
             Text(t("campusMap.noFloorPlans"), style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted)
         }
-        if (directions != null) {
-            RouteDetails(directions, route, endRoute)
-        } else if (card.routable) {
-            ActionButton(t("campusMap.directions"), onClick = { route(false) }, icon = Icons.Rounded.Directions)
-        }
         Links(card.links, openLink)
         if (card.candidates.isNotEmpty()) Candidates(card.candidates, choose)
     }
-}
-
-/** Core's route in words: the steps, the length, and that it is inferred.
- * The step-free choice asks Core again. */
-@Composable
-private fun RouteDetails(directions: CampusMapDirections, route: (Boolean) -> Unit, end: () -> Unit) {
-    val stepFree = when (directions) {
-        is CampusMapDirections.Route -> directions.route.stepFree
-        is CampusMapDirections.NotFound -> directions.stepFree
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                t("campusMap.directions"),
-                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Theme.colors.ink,
-                modifier = Modifier.weight(1f).semantics { heading() },
-            )
-            Text(
-                t("campusMap.stepFree"),
-                style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted,
-            )
-            Switch(checked = stepFree, onCheckedChange = { route(it) })
-        }
-        when (directions) {
-            is CampusMapDirections.NotFound -> Text(
-                t(if (directions.stepFree) "campusMap.routeNotFoundStepFree" else "campusMap.routeNotFound"),
-                style = MaterialTheme.typography.bodyMedium, color = Theme.colors.warn,
-            )
-            is CampusMapDirections.Route -> {
-                val found = directions.route
-                found.steps.forEachIndexed { index, step ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            "${index + 1}", style = MaterialTheme.typography.bodyMedium.tabular(),
-                            fontWeight = FontWeight.SemiBold, color = Theme.colors.accent,
-                        )
-                        Text(stepText(step), style = MaterialTheme.typography.bodyMedium, color = Theme.colors.ink)
-                    }
-                }
-                Text(
-                    t("campusMap.routeLength", "metres" to found.lengthM.roundToInt()),
-                    style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted,
-                )
-                Text(
-                    t("campusMap.routeEstimate"),
-                    style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted,
-                )
-            }
-        }
-        ActionButton(t("campusMap.endDirections"), onClick = end, level = ButtonLevel.Secondary)
-    }
-}
-
-@Composable
-private fun stepText(step: CampusMapRouteStep): String = when (step) {
-    is CampusMapRouteStep.Enter -> step.entrance?.let { t("campusMap.routeEnter", "entrance" to it, "level" to step.levelName) }
-        ?: t("campusMap.routeEnterUnnamed", "level" to step.levelName)
-    is CampusMapRouteStep.Climb -> t(
-        if (step.via == CampusMapVia.LIFT) "campusMap.routeLift" else "campusMap.routeStairs",
-        "level" to step.levelName,
-    )
-    is CampusMapRouteStep.Arrive -> t("campusMap.routeArrive", "title" to step.title, "level" to step.levelName)
 }
 
 /** A state the map cannot be drawn in, with at most one way on. */

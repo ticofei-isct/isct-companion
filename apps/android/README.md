@@ -79,13 +79,12 @@ UniFFI checks signatures when the library loads.
   Tokyo Tech Portal account and needs ScienceTokyo Wi-Fi; a failure is the
   system's print notification, with its retry. iOS has no print service an
   app can provide.
-- This fork adds what iOS does not have: directions inside a building and a
-  stacked view of its floors. Core infers a walk network from the floor plans
-  (`campus_map/route.rs`; the export has no doors, so a route is a
-  suggestion and the card says so) and answers `Directions` with legs, floor
-  changes and worded steps, step-free on request. `Stack` raises the
-  building's floors as MapLibre fill extrusions seen at an angle, with the
-  route as a strip on each floor and a column where it changes floor.
+- This fork adds a view iOS does not have: the building's floors as a stack
+  seen at an angle (`Stack`). Core gives each floor a height and its shapes;
+  the shell raises them as MapLibre fill extrusions, the floor picked solid,
+  the ones below faint and the ones above nearly clear, with the selected
+  room raised in the accent. Entering the stack brings the selected room's
+  floor forward.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
 - The quarter export is a share button in the 時間割 header rather than a long

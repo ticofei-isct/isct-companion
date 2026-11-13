@@ -204,9 +204,7 @@ fn old_camera_reports_and_floor_changes_never_replace_the_selection() {
     let tapped_framing = page.framing.clone().expect("tap framing");
     // Search and footprint taps issue the same command for the same place.
     page.apply(CampusMapIntent::Select {
-        place: CampusMapPlace::Building {
-            id: W9.to_owned(),
-        },
+        place: CampusMapPlace::Building { id: W9.to_owned() },
     });
     assert_eq!(
         page.framing.as_ref().expect("search framing").bounds,
@@ -276,66 +274,6 @@ fn old_camera_reports_and_floor_changes_never_replace_the_selection() {
 
 #[test]
 #[ignore = "needs the published export in ISCT_CAMPUS_MAP_EXPORT"]
-fn directions_belong_to_the_room_they_lead_to() {
-    let map = map();
-    let w9 = building(&map, W9);
-    let preferences = Preferences {
-        english: false,
-        maps: MapsApp::Google,
-    };
-    let mut page = Page::open(map.clone(), preferences, Some("W9-324"));
-    assert!(page.card().is_some_and(|card| card.routable));
-    let before = page.framing.as_ref().map_or(0, |framing| framing.key);
-    page.apply(CampusMapIntent::Directions {
-        entrance_id: None,
-        step_free: true,
-    });
-    let scene = page.scene(1).expect("the route changes the scene");
-    let Some(CampusMapDirections::Route { route }) = scene.directions else {
-        panic!("W9-324 has a step-free route");
-    };
-    assert!(route.step_free);
-    assert!(matches!(
-        route.steps.first(),
-        Some(CampusMapRouteStep::Enter { .. })
-    ));
-    assert!(matches!(
-        route.steps.last(),
-        Some(CampusMapRouteStep::Arrive { title, .. }) if title == "W9-324"
-    ));
-    assert!(route.steps.iter().all(|step| !matches!(
-        step,
-        CampusMapRouteStep::Climb {
-            via: CampusMapVia::Stairs,
-            ..
-        }
-    )));
-    // The route is framed, and its first floor shows once the camera lands.
-    assert!(page
-        .framing
-        .as_ref()
-        .is_some_and(|framing| framing.key > before));
-    let first = route.legs.first().expect("a first leg");
-    let arrival = page.arrival.flatten();
-    assert_eq!(arrival.map(|(building, _)| building), Some(w9));
-    assert_eq!(
-        arrival.map(|(building, level)| map.export.buildings[building].levels[level]
-            .id
-            .clone()),
-        Some(first.level_id.clone())
-    );
-
-    // Another selection ends the route; coming back does not revive it.
-    page.apply(CampusMapIntent::Select {
-        place: CampusMapPlace::Building { id: W9.to_owned() },
-    });
-    assert_eq!(page.render(1).directions, None);
-    page.apply(CampusMapIntent::Choose { index: 0 });
-    assert_eq!(page.render(1).directions, None);
-}
-
-#[test]
-#[ignore = "needs the published export in ISCT_CAMPUS_MAP_EXPORT"]
 fn a_stack_lifts_every_floor_off_the_ground() {
     let map = map();
     let w9 = building(&map, W9);
@@ -350,7 +288,24 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         framing: framing.key,
     });
     let shown = page.floor.expect("the room's floor");
+    // Looking at another floor first: the stack still brings the room's
+    // floor forward, so the room stands out.
+    let other = map.export.buildings[w9]
+        .levels
+        .iter()
+        .position(|level| level.id != map.export.buildings[w9].levels[shown.1].id)
+        .expect("W9 has several floors");
+    page.apply(CampusMapIntent::Level {
+        id: map.export.buildings[w9].levels[other].id.clone(),
+    });
+    assert_ne!(page.floor, Some(shown));
     page.apply(CampusMapIntent::Stack { on: true });
+    let framing = page.framing.clone().expect("the stack's framing");
+    page.apply(CampusMapIntent::Camera {
+        camera: camera(&view(rect(framing.bounds)), false),
+        framing: framing.key,
+    });
+    assert_eq!(page.floor, Some(shown));
     let scene = page.render(1);
     assert!(scene.stacked);
     let levels = &map.export.buildings[w9].levels;
@@ -365,7 +320,10 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         .stack
         .iter()
         .any(|floor| floor.shown && floor.level_id == levels[shown.1].id));
-    assert!(scene.stack.iter().any(|floor| !floor.highlight.is_empty()));
+    assert!(scene
+        .stack
+        .iter()
+        .any(|floor| floor.shown && !floor.highlight.is_empty()));
     // Nothing of a floor is left on the ground: no plan layers, and no
     // marks but the entrances.
     assert!(scene.layers.iter().all(|layer| matches!(

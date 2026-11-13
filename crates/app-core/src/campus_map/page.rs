@@ -6,16 +6,13 @@
 //! camera, a floor picked or the card folded change the floor at most, never
 //! the selection. Only another selection, or closing the card, replaces it.
 use super::{
-    export::{LineTone, Position, UnitCategory},
+    export::{LineTone, UnitCategory},
     geometry::{self, Viewport},
     map::{maps_url, point, polygon, rect_bounds, Map, MapsApp, Match, Target, TAP_SLOP_POINTS},
-    route::{Route, Via},
     search::Found,
-    CampusMapCamera, CampusMapCandidate, CampusMapCard, CampusMapDirections, CampusMapFraming,
-    CampusMapIntent, CampusMapLayer, CampusMapLayerRole, CampusMapLink, CampusMapMark,
-    CampusMapMarkKind, CampusMapPlace, CampusMapPoint, CampusMapRoute, CampusMapRouteClimb,
-    CampusMapRouteLeg, CampusMapRouteStep, CampusMapScene, CampusMapSearchResult,
-    CampusMapStackFloor, CampusMapVia,
+    CampusMapCamera, CampusMapCandidate, CampusMapCard, CampusMapFraming, CampusMapIntent,
+    CampusMapLayer, CampusMapLayerRole, CampusMapLink, CampusMapMark, CampusMapMarkKind,
+    CampusMapPlace, CampusMapPoint, CampusMapScene, CampusMapSearchResult, CampusMapStackFloor,
 };
 use std::sync::Arc;
 
@@ -65,7 +62,6 @@ struct Shown {
     selection: Selection,
     framing: u64,
     stacked: bool,
-    directions: Option<CampusMapDirections>,
 }
 
 pub(super) struct Page {
@@ -83,9 +79,6 @@ pub(super) struct Page {
     view: Option<Viewport>,
     /// The floors are shown as a stack.
     stacked: bool,
-    /// The latest `Directions` and the selection it answered: a route
-    /// belongs to the room it leads to and goes with it.
-    directions: Option<(Selection, CampusMapDirections)>,
     revision: u64,
     shown: Option<Shown>,
 }
@@ -105,7 +98,6 @@ impl Page {
             arrival: None,
             view: None,
             stacked: false,
-            directions: None,
             revision: 0,
             shown: None,
         };
@@ -120,16 +112,6 @@ impl Page {
     }
 
     pub(super) fn apply(&mut self, intent: CampusMapIntent) {
-        let selected = self.selection.clone();
-        self.apply_intent(intent);
-        // A route leads to the room it was asked for: another selection
-        // ends it, and coming back to the room does not bring it back.
-        if self.selection != selected {
-            self.directions = None;
-        }
-    }
-
-    fn apply_intent(&mut self, intent: CampusMapIntent) {
         match intent {
             CampusMapIntent::Choose { index } => self.choose(index as usize),
             CampusMapIntent::Camera { camera, framing } => self.camera(&camera, framing),
@@ -137,11 +119,6 @@ impl Page {
             CampusMapIntent::Tap { point, level_id } => self.tap(point, level_id.as_deref()),
             CampusMapIntent::Select { place } => self.select(&place),
             CampusMapIntent::Clear => self.selection = Selection::None,
-            CampusMapIntent::Directions {
-                entrance_id,
-                step_free,
-            } => self.ask_directions(entrance_id.as_deref(), step_free),
-            CampusMapIntent::EndDirections => self.directions = None,
             CampusMapIntent::Stack { on } => self.stack(on),
         }
     }
@@ -153,7 +130,6 @@ impl Page {
             selection: self.selection.clone(),
             framing: self.framing.as_ref().map_or(0, |framing| framing.key),
             stacked: self.stacked,
-            directions: self.current_directions().cloned(),
         };
         if self.shown.as_ref() == Some(&shown) {
             return None;
@@ -327,61 +303,6 @@ impl Page {
         }
     }
 
-    /// The selected room's units and building, when it is on the plans.
-    fn route_target(&self) -> Option<(usize, Vec<usize>)> {
-        let building = self.selected_building()?;
-        if self
-            .selected_target()
-            .is_some_and(|target| target.matched != Match::Room)
-        {
-            return None;
-        }
-        let units = self.highlighted();
-        (!units.is_empty()).then_some((building, units))
-    }
-
-    /// Finds the way to the selected room and frames it, its first floor
-    /// shown once the camera lands.
-    fn ask_directions(&mut self, entrance_id: Option<&str>, step_free: bool) {
-        let Some((building, units)) = self.route_target() else {
-            return;
-        };
-        let map = self.map.clone();
-        let from = match entrance_id {
-            Some(id) => match map.entrances.get(id) {
-                Some((owner, entrance)) if *owner == building => Some(*entrance),
-                _ => return,
-            },
-            None => None,
-        };
-        let answer = match map.walk(building).route(from, &units, step_free) {
-            Some(route) => {
-                let points: Vec<Position> = route
-                    .legs
-                    .iter()
-                    .flat_map(|leg| leg.points.iter().copied())
-                    .collect();
-                if let Some(rect) = geometry::bounds([&points]) {
-                    let first = route.legs.first().map(|leg| (building, leg.level));
-                    self.frame(rect, first);
-                }
-                CampusMapDirections::Route {
-                    route: self.route_model(building, &route, step_free),
-                }
-            }
-            None => CampusMapDirections::NotFound { step_free },
-        };
-        self.directions = Some((self.selection.clone(), answer));
-    }
-
-    /// The directions for what is selected now, if any were asked for.
-    fn current_directions(&self) -> Option<&CampusMapDirections> {
-        self.directions
-            .as_ref()
-            .filter(|(selection, _)| *selection == self.selection)
-            .map(|(_, directions)| directions)
-    }
-
     /// Stacks the floors of the building in view (else the selection's),
     /// framed whole; back on, one floor from above.
     fn stack(&mut self, on: bool) {
@@ -397,9 +318,22 @@ impl Page {
         else {
             return;
         };
-        let floor = self
-            .floor
-            .filter(|(shown, _)| *shown == building)
+        // The selected room's floor comes forward, so the room stands out
+        // in the stack; else the floor already shown, else the ground.
+        let room_floor = match &self.selection {
+            Selection::Unit {
+                building: owner,
+                level,
+                ..
+            } if *owner == building => Some(*level),
+            _ => self
+                .selected_target()
+                .filter(|target| target.building == building && target.matched == Match::Room)
+                .and_then(|target| target.level),
+        };
+        let floor = room_floor
+            .map(|level| (building, level))
+            .or_else(|| self.floor.filter(|(shown, _)| *shown == building))
             .or_else(|| {
                 self.map
                     .ground_level(building)
@@ -414,77 +348,6 @@ impl Page {
         let levels = &self.map.export.buildings[building].levels;
         let lowest = levels.iter().map(|level| level.ordinal).min().unwrap_or(0);
         f64::from(levels[level].ordinal - lowest) * STACK_SPACING_M
-    }
-
-    fn route_model(&self, building: usize, route: &Route, step_free: bool) -> CampusMapRoute {
-        let record = &self.map.export.buildings[building];
-        let level_id = |level: usize| record.levels[level].id.clone();
-        let level_name = |level: usize| record.levels[level].name.clone();
-        let via = |via: Via| match via {
-            Via::Stairs => CampusMapVia::Stairs,
-            Via::Lift => CampusMapVia::Lift,
-        };
-        let entrance = &record.entrances[route.entrance];
-        let mut steps = Vec::new();
-        if let Some(leg) = route.legs.first() {
-            steps.push(CampusMapRouteStep::Enter {
-                entrance: entrance
-                    .name
-                    .as_ref()
-                    .map(|name| name.pick(self.preferences.english).to_owned()),
-                level_name: level_name(leg.level),
-            });
-        }
-        for climb in &route.climbs {
-            let next = CampusMapRouteStep::Climb {
-                via: via(climb.via),
-                level_name: level_name(climb.to),
-            };
-            // Flight after flight of the same stairs is one step.
-            if matches!(
-                steps.last(),
-                Some(CampusMapRouteStep::Climb { via: last, .. }) if *last == via(climb.via)
-            ) {
-                steps.pop();
-            }
-            steps.push(next);
-        }
-        if let Some(leg) = route.legs.last() {
-            steps.push(CampusMapRouteStep::Arrive {
-                title: self
-                    .card()
-                    .and_then(|card| card.title)
-                    .unwrap_or_else(|| self.map.name(building, self.preferences.english)),
-                level_name: level_name(leg.level),
-            });
-        }
-        CampusMapRoute {
-            entrance_id: entrance.id.clone(),
-            step_free,
-            length_m: route.length_m,
-            legs: route
-                .legs
-                .iter()
-                .map(|leg| CampusMapRouteLeg {
-                    level_id: level_id(leg.level),
-                    points: leg.points.iter().copied().map(point).collect(),
-                    base_m: self.base_m(building, leg.level),
-                })
-                .collect(),
-            climbs: route
-                .climbs
-                .iter()
-                .map(|climb| CampusMapRouteClimb {
-                    point: point(climb.at),
-                    via: via(climb.via),
-                    from_level_id: level_id(climb.from),
-                    to_level_id: level_id(climb.to),
-                    from_base_m: self.base_m(building, climb.from),
-                    to_base_m: self.base_m(building, climb.to),
-                })
-                .collect(),
-            steps,
-        }
     }
 
     /// Every floor of the stacked building, lowest first.
@@ -623,7 +486,6 @@ impl Page {
             card: self.card(),
             framing: self.framing.clone(),
             attribution: map.export.attribution.clone(),
-            directions: self.current_directions().cloned(),
             stacked: self.stacked && floor.is_some(),
             stack: self.stack_floors(),
         }
@@ -948,7 +810,6 @@ impl Page {
                 .selected_target()
                 .is_some_and(|target| target.matched == Match::Building),
             no_floor_plans: record.levels.is_empty(),
-            routable: self.route_target().is_some() && map.walk(building).has_entrances(),
             links,
             candidates,
         })

@@ -39,7 +39,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.isctcompanion.R
 import app.isctcompanion.core.CampusMapCamera
-import app.isctcompanion.core.CampusMapDirections
 import app.isctcompanion.core.CampusMapFraming
 import app.isctcompanion.core.CampusMapLayer
 import app.isctcompanion.core.CampusMapLayerRole
@@ -50,7 +49,6 @@ import app.isctcompanion.core.CampusMapPoint
 import app.isctcompanion.core.CampusMapPolygon
 import app.isctcompanion.core.CampusMapScene
 import app.isctcompanion.core.CampusMapStackFloor
-import app.isctcompanion.core.CampusMapVia
 import app.isctcompanion.design.LocalReducedMotion
 import app.isctcompanion.design.Palette
 import app.isctcompanion.design.Theme
@@ -76,7 +74,6 @@ import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -91,9 +88,10 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * line widths in metres, MapLibre's own symbol collision) and reports the
  * part of the map the controls leave visible.
  *
- * A route is a line on the floor shown. In the stack, Core's floors become
- * slabs raised to their height (MapLibre's fill extrusion), the route a
- * strip on each and a column where it changes floor, seen at an angle. */
+ * In the stack, Core's floors become slabs raised to their height
+ * (MapLibre's fill extrusion), seen at an angle: the floor picked solid,
+ * the ones below it faint, the ones above it barely there so they never
+ * hide it, and the selected room raised in the accent on whichever floor. */
 @Composable
 fun FloorMapView(
     scene: CampusMapScene?,
@@ -297,9 +295,7 @@ private class FloorPainter(private val view: MapView) {
     /** Per role, the ids of Core's layers its source holds now. */
     private val drawn = HashMap<CampusMapLayerRole, List<String>>()
     private var drawnMarks: List<CampusMapMark>? = null
-    /** The route and the stack as last drawn, and whether the camera is
-     * tilted for the stack. */
-    private var drawnRoute: Pair<CampusMapDirections?, String?>? = null
+    /** The stack as last drawn, and whether the camera is tilted for it. */
     private var drawnStack: List<CampusMapStackFloor>? = null
     private var tilted = false
 
@@ -427,7 +423,6 @@ private class FloorPainter(private val view: MapView) {
         drawMarks(style, scene?.marks.orEmpty())
         val stacked = scene?.stacked == true
         drawStack(style, if (stacked) scene?.stack.orEmpty() else emptyList())
-        drawRoute(style, scene?.directions, if (stacked) null else scene?.levelId, stacked)
         tilt(map, stacked)
     }
 
@@ -570,20 +565,6 @@ private class FloorPainter(private val view: MapView) {
         style.addLayer(fill(CampusMapLayerRole.HIGHLIGHT, palette.accent.copy(alpha = 0.35f).toArgb()))
         style.addLayer(stroke(CampusMapLayerRole.HIGHLIGHT, palette.accent.toArgb(), 2f))
 
-        // The route on the floor shown: a line over the plan, a mark where
-        // it changes floor.
-        style.addSource(GeoJsonSource(ROUTE))
-        style.addLayer(
-            LineLayer(ROUTE_LINE, ROUTE)
-                .withFilter(Expression.eq(Expression.geometryType(), Expression.literal("LineString")))
-                .withProperties(
-                    PropertyFactory.lineColor(palette.accent.toArgb()),
-                    PropertyFactory.lineWidth(ROUTE_DP),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                ),
-        )
-
         // MapLibre places the symbols of upper layers first, so the order
         // is the priority: room labels give way to amenities, and entrances
         // and the selected room always show.
@@ -623,48 +604,30 @@ private class FloorPainter(private val view: MapView) {
                     PropertyFactory.textAllowOverlap(true),
                 ),
         )
-        style.addLayer(
-            SymbolLayer(ROUTE_CLIMBS, ROUTE)
-                .withFilter(Expression.eq(Expression.geometryType(), Expression.literal("Point")))
-                .withProperties(
-                    PropertyFactory.iconImage(Expression.get("icon")),
-                    PropertyFactory.iconAllowOverlap(true),
-                ),
-        )
-        style.addImage(CLIMB_STAIRS, round(R.drawable.campus_map_stairs, palette.accentInk.toArgb(), palette.accent.toArgb(), palette))
-        style.addImage(CLIMB_LIFT, round(R.drawable.campus_map_elevator, palette.accentInk.toArgb(), palette.accent.toArgb(), palette))
-
-        // The stack: floors raised to their height, the floor picked solid
-        // and the others faint, so the ones below show through; the route
-        // over them. Fill extrusions hide each other by depth.
+        // The stack. Each layer has one opacity, so the floors are split by
+        // where they sit against the floor picked: below it faint, so they
+        // show through; above it nearly clear, so the floor picked is never
+        // behind them; the selected room solid on top of all.
         style.addSource(GeoJsonSource(STACK))
-        style.addSource(GeoJsonSource(STACK_ROUTE))
-        val part = Expression.get("part")
         val color = Expression.match(
-            part,
+            Expression.get("part"),
             Expression.color(palette.surface2.toArgb()),
             Expression.stop("outline", Expression.color(palette.surface.toArgb())),
             Expression.stop("walkway", Expression.color(palette.accentSoft.toArgb())),
             Expression.stop("highlight", Expression.color(palette.accent.toArgb())),
         )
-        fun slab(id: String, shown: Boolean, opacity: Float) = FillExtrusionLayer(id, STACK)
-            .withFilter(Expression.eq(Expression.get("shown"), Expression.literal(shown)))
+        fun slab(id: String, place: String, opacity: Float) = FillExtrusionLayer(id, STACK)
+            .withFilter(Expression.eq(Expression.get("place"), Expression.literal(place)))
             .withProperties(
                 PropertyFactory.fillExtrusionColor(color),
                 PropertyFactory.fillExtrusionBase(Expression.get("base")),
                 PropertyFactory.fillExtrusionHeight(Expression.get("top")),
                 PropertyFactory.fillExtrusionOpacity(opacity),
             )
-        style.addLayer(slab(STACK_FAINT, false, 0.35f))
-        style.addLayer(slab(STACK_SOLID, true, 0.9f))
-        style.addLayer(
-            FillExtrusionLayer(STACK_ROUTE, STACK_ROUTE).withProperties(
-                PropertyFactory.fillExtrusionColor(palette.accent.toArgb()),
-                PropertyFactory.fillExtrusionBase(Expression.get("base")),
-                PropertyFactory.fillExtrusionHeight(Expression.get("top")),
-                PropertyFactory.fillExtrusionOpacity(1f),
-            ),
-        )
+        style.addLayer(slab(STACK_BELOW, BELOW, 0.3f))
+        style.addLayer(slab(STACK_SHOWN, SHOWN, 0.95f))
+        style.addLayer(slab(STACK_HIGHLIGHT, HIGHLIGHT, 1f))
+        style.addLayer(slab(STACK_ABOVE, ABOVE, 0.08f))
     }
 
     private fun source(role: CampusMapLayerRole) = "campus-${role.name.lowercase()}"
@@ -806,50 +769,7 @@ private class FloorPainter(private val view: MapView) {
         onPlaced(placed)
     }
 
-    // Route and stack
-
-    /** The route's legs on the floor shown as lines, with a mark where it
-     * changes floor; in the stack, a strip a little above each floor and a
-     * column for each change. */
-    private fun drawRoute(style: Style, directions: CampusMapDirections?, levelId: String?, stacked: Boolean) {
-        val key = directions to (if (stacked) STACK else levelId)
-        if (drawnRoute == key) return
-        drawnRoute = key
-        val route = (directions as? CampusMapDirections.Route)?.route
-        val flat = mutableListOf<String>()
-        val raised = mutableListOf<String>()
-        if (route != null && !stacked) {
-            for (leg in route.legs) {
-                if (leg.levelId != levelId || leg.points.size < 2) continue
-                flat += buildString {
-                    append("""{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":""")
-                    path(leg.points)
-                    append("}}")
-                }
-            }
-            for (climb in route.climbs) {
-                if (climb.fromLevelId != levelId && climb.toLevelId != levelId) continue
-                val icon = if (climb.via == CampusMapVia.LIFT) CLIMB_LIFT else CLIMB_STAIRS
-                flat += """{"type":"Feature","properties":{"icon":"$icon"},"geometry":{"type":"Point","coordinates":[${climb.point.longitude},${climb.point.latitude}]}}"""
-            }
-        }
-        if (route != null && stacked) {
-            for (leg in route.legs) {
-                for (pair in leg.points.zipWithNext()) {
-                    strip(pair.first, pair.second)?.let {
-                        raised += raisedFeature(it, leg.baseM + SLAB_M, leg.baseM + SLAB_M + ROUTE_RISE_M)
-                    }
-                }
-            }
-            for (climb in route.climbs) {
-                val low = minOf(climb.fromBaseM, climb.toBaseM)
-                val high = maxOf(climb.fromBaseM, climb.toBaseM)
-                raised += raisedFeature(square(climb.point, COLUMN_M), low + SLAB_M, high + SLAB_M + ROUTE_RISE_M)
-            }
-        }
-        style.getSourceAs<GeoJsonSource>(ROUTE)?.setGeoJson(collection(flat))
-        style.getSourceAs<GeoJsonSource>(STACK_ROUTE)?.setGeoJson(collection(raised))
-    }
+    // Stack
 
     /** Each floor as slabs: its outline as the floor, its spaces a little
      * above it (walls are left out: lines cannot be raised), the selected
@@ -857,64 +777,43 @@ private class FloorPainter(private val view: MapView) {
     private fun drawStack(style: Style, floors: List<CampusMapStackFloor>) {
         if (drawnStack == floors) return
         drawnStack = floors
+        val shownBase = floors.firstOrNull { it.shown }?.baseM ?: 0.0
         val features = mutableListOf<String>()
         for (floor in floors) {
-            fun add(polygons: List<CampusMapPolygon>, part: String, top: Double) {
+            val place = when {
+                floor.shown -> SHOWN
+                floor.baseM < shownBase -> BELOW
+                else -> ABOVE
+            }
+            fun add(polygons: List<CampusMapPolygon>, part: String, top: Double, at: String = place) {
                 for (shape in polygons) {
-                    val ring = shape.rings.firstOrNull() ?: continue
-                    if (ring.size < 3) continue
-                    features += raisedFeature(shape.rings, floor.baseM, floor.baseM + top, part, floor.shown)
+                    if ((shape.rings.firstOrNull()?.size ?: 0) < 3) continue
+                    features += slabFeature(shape.rings, floor.baseM, floor.baseM + top, part, at)
                 }
             }
             add(floor.outline, "outline", OUTLINE_M)
-            add(floor.walkways, "walkway", SLAB_M)
-            add(floor.rooms, "room", SLAB_M)
-            add(floor.highlight, "highlight", HIGHLIGHT_M)
+            // Above the floor picked only the outline is drawn: its rooms
+            // would grid over the plan that matters.
+            if (place != ABOVE) {
+                add(floor.walkways, "walkway", SLAB_M)
+                add(floor.rooms, "room", SLAB_M)
+            }
+            add(floor.highlight, "highlight", HIGHLIGHT_M, HIGHLIGHT)
         }
         style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
     }
 
-    private fun raisedFeature(
-        rings: List<List<CampusMapPoint>>,
-        base: Double,
-        top: Double,
-        part: String = "route",
-        shown: Boolean = true,
-    ): String = buildString {
-        append("""{"type":"Feature","properties":{"base":""").append(base)
-        append(""","top":""").append(top)
-        append(""","part":"$part","shown":$shown},"geometry":{"type":"Polygon","coordinates":[""")
-        rings.forEachIndexed { index, ring ->
-            if (index > 0) append(',')
-            path(ring)
+    private fun slabFeature(rings: List<List<CampusMapPoint>>, base: Double, top: Double, part: String, place: String) =
+        buildString {
+            append("""{"type":"Feature","properties":{"base":""").append(base)
+            append(""","top":""").append(top)
+            append(""","part":"$part","place":"$place"},"geometry":{"type":"Polygon","coordinates":[""")
+            rings.forEachIndexed { index, ring ->
+                if (index > 0) append(',')
+                path(ring)
+            }
+            append("]}}")
         }
-        append("]}}")
-    }
-
-    /** A strip [ROUTE_WIDTH_M] wide along one segment of a leg. */
-    private fun strip(from: CampusMapPoint, to: CampusMapPoint): List<List<CampusMapPoint>>? {
-        val perLng = METRES_PER_DEGREE * cos(Math.toRadians(from.latitude))
-        val dx = (to.longitude - from.longitude) * perLng
-        val dy = (to.latitude - from.latitude) * METRES_PER_DEGREE
-        val length = hypot(dx, dy)
-        if (length < 0.05) return null
-        val half = ROUTE_WIDTH_M / 2
-        val nx = -dy / length * half
-        val ny = dx / length * half
-        fun shift(at: CampusMapPoint, sign: Int) =
-            CampusMapPoint(latitude = at.latitude + sign * ny / METRES_PER_DEGREE, longitude = at.longitude + sign * nx / perLng)
-        val ring = listOf(shift(from, 1), shift(to, 1), shift(to, -1), shift(from, -1), shift(from, 1))
-        return listOf(ring)
-    }
-
-    /** A square `side` metres across around `at`. */
-    private fun square(at: CampusMapPoint, side: Double): List<List<CampusMapPoint>> {
-        val half = side / 2
-        val lat = half / METRES_PER_DEGREE
-        val lng = half / (METRES_PER_DEGREE * cos(Math.toRadians(at.latitude)))
-        fun corner(x: Double, y: Double) = CampusMapPoint(latitude = at.latitude + y, longitude = at.longitude + x)
-        return listOf(listOf(corner(-lng, -lat), corner(lng, -lat), corner(lng, lat), corner(-lng, lat), corner(-lng, -lat)))
-    }
 
     /** An icon on a 28 dp disc with a hairline rim, as iOS draws them. */
     private fun round(drawable: Int, tint: Int, fill: Int, palette: Palette): Bitmap {
@@ -961,28 +860,22 @@ private class FloorPainter(private val view: MapView) {
         const val AMENITIES = "campus-amenities"
         const val ENTRANCES = "campus-entrances"
         const val LIT_LABELS = "campus-labels-lit"
-        const val ROUTE = "campus-route"
-        const val ROUTE_LINE = "campus-route-line"
-        const val ROUTE_CLIMBS = "campus-route-climbs"
-        const val CLIMB_STAIRS = "campus-climb-stairs"
-        const val CLIMB_LIFT = "campus-climb-lift"
         const val STACK = "campus-stack"
-        const val STACK_FAINT = "campus-stack-faint"
-        const val STACK_SOLID = "campus-stack-solid"
-        const val STACK_ROUTE = "campus-stack-route"
-        /** The route's line on a floor, in dp. */
-        const val ROUTE_DP = 5f
+        const val STACK_BELOW = "campus-stack-below"
+        const val STACK_SHOWN = "campus-stack-shown"
+        const val STACK_HIGHLIGHT = "campus-stack-highlight"
+        const val STACK_ABOVE = "campus-stack-above"
+        const val BELOW = "below"
+        const val SHOWN = "shown"
+        const val HIGHLIGHT = "highlight"
+        const val ABOVE = "above"
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
-        /** Slab heights in the stack, metres: the floor, its spaces, the
-         * selected room; the route strip above the spaces. */
+        /** Slab heights in the stack, metres: the floor, its spaces, and the
+         * selected room, tall enough to read from any angle. */
         const val OUTLINE_M = 0.3
         const val SLAB_M = 0.6
-        const val HIGHLIGHT_M = 2.4
-        const val ROUTE_RISE_M = 0.5
-        const val ROUTE_WIDTH_M = 1.4
-        const val COLUMN_M = 1.6
-        const val METRES_PER_DEGREE = 111_320.0
+        const val HIGHLIGHT_M = 3.0
         const val ENTRANCE_IMAGE = "campus-entrance"
         const val ENTRANCE_SELECTED_IMAGE = "campus-entrance-selected"
         /** OpenFreeMap's quiet styles, and two fonts its glyph server has. */

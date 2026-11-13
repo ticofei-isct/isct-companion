@@ -2,7 +2,6 @@
 //! building a room string names, which building and floor the camera shows,
 //! and what a tap hits. Buildings, levels and units are export indexes here;
 //! a level is the index into its building's `levels`.
-use super::route::Walk;
 use super::{
     export::{Export, Position, Rings},
     geometry::{self, Viewport},
@@ -10,10 +9,7 @@ use super::{
     search::{Found, Index},
     CampusMapBounds, CampusMapError, CampusMapLevel, CampusMapPoint, CampusMapPolygon,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::collections::{HashMap, HashSet};
 
 /// A building comes into focus once it spans this share of the viewport
 /// (`Viewport::share`) with the viewport's centre inside its footprint.
@@ -66,9 +62,6 @@ pub(super) struct Map {
     /// Footprint area per building, square metres.
     areas: Vec<f64>,
     search: Index,
-    /// Each building's walk network, inferred the first time a route or a
-    /// card asks for it.
-    walks: Mutex<HashMap<usize, Arc<Walk>>>,
 }
 
 /// How much of a room string the map knows.
@@ -311,17 +304,7 @@ impl Map {
             linework_by_level,
             rooms,
             areas,
-            walks: Mutex::new(HashMap::new()),
         })
-    }
-
-    /// The building's walk network (`route`), inferred once.
-    pub(super) fn walk(&self, building: usize) -> Arc<Walk> {
-        let mut walks = self.walks.lock().unwrap_or_else(PoisonError::into_inner);
-        walks
-            .entry(building)
-            .or_insert_with(|| Arc::new(Walk::build(self, building)))
-            .clone()
     }
 
     /// Units the file publishes: the rows a suspicious shrink counts.

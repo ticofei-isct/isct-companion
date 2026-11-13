@@ -17,7 +17,6 @@ mod geometry;
 mod map;
 mod matching;
 mod page;
-mod route;
 mod search;
 
 use crate::data::{DataError, DataStore};
@@ -143,16 +142,6 @@ pub enum CampusMapIntent {
     Select { place: CampusMapPlace },
     /// Closed the card: nothing is selected.
     Clear,
-    /// Asked for the way to the selected room: from one entrance of its
-    /// building (by id), or with none from whichever gives the shortest
-    /// route; `step_free` never takes stairs. Answered in the scene's
-    /// `directions` while that room stays selected.
-    Directions {
-        entrance_id: Option<String>,
-        step_free: bool,
-    },
-    /// Put the route away.
-    EndDirections,
     /// Turned the floors of the building in view into a stack seen at an
     /// angle (`true`), or back into the one floor seen from above.
     Stack { on: bool },
@@ -270,9 +259,6 @@ pub struct CampusMapCard {
     pub building_only: bool,
     /// The selection's building has no floor plans at all.
     pub no_floor_plans: bool,
-    /// A route to the selection can be asked for (`Directions`): it is a
-    /// room on the plans, and an entrance of its building joins them.
-    pub routable: bool,
     /// One per entrance of the selection's building, the tapped one first;
     /// the building's centre when it has none. No route is ever drawn.
     pub links: Vec<CampusMapLink>,
@@ -287,91 +273,6 @@ pub struct CampusMapCard {
 pub struct CampusMapFraming {
     pub key: u64,
     pub bounds: CampusMapBounds,
-}
-
-/// How a route goes up or down.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum CampusMapVia {
-    Stairs,
-    Lift,
-}
-
-/// A stretch of a route on one floor.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CampusMapRouteLeg {
-    pub level_id: String,
-    pub points: Vec<CampusMapPoint>,
-    /// Height of this floor in the stack (`CampusMapStackFloor::base_m`).
-    pub base_m: f64,
-}
-
-/// Where a route changes floor.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CampusMapRouteClimb {
-    pub point: CampusMapPoint,
-    pub via: CampusMapVia,
-    pub from_level_id: String,
-    pub to_level_id: String,
-    pub from_base_m: f64,
-    pub to_base_m: f64,
-}
-
-/// One line of the route's directions, in order; shells word it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum CampusMapRouteStep {
-    /// In by this entrance (`None` when the export does not name it), on
-    /// this floor.
-    Enter {
-        entrance: Option<String>,
-        level_name: String,
-    },
-    /// Up or down to this floor.
-    Climb {
-        via: CampusMapVia,
-        level_name: String,
-    },
-    /// The room, on its floor.
-    Arrive { title: String, level_name: String },
-}
-
-/// A way from an entrance to the selected room, inferred from the plans:
-/// the plans show no doors, so it may cross a wall that has none.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CampusMapRoute {
-    pub entrance_id: String,
-    pub step_free: bool,
-    /// Metres walked; a ride counts as the walk it saves.
-    pub length_m: f64,
-    pub legs: Vec<CampusMapRouteLeg>,
-    pub climbs: Vec<CampusMapRouteClimb>,
-    pub steps: Vec<CampusMapRouteStep>,
-}
-
-/// The answer to `Directions`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum CampusMapDirections {
-    Route {
-        route: CampusMapRoute,
-    },
-    /// The plans join no entrance to the room (step-free: not without
-    /// stairs).
-    NotFound {
-        step_free: bool,
-    },
 }
 
 /// One floor of the stack: shapes the shell raises to `base_m`.
@@ -420,8 +321,6 @@ pub struct CampusMapScene {
     pub framing: Option<CampusMapFraming>,
     /// The data's credit lines (OpenStreetMap, ODbL), shown on the map.
     pub attribution: Vec<String>,
-    /// The answer to the latest `Directions` for this selection.
-    pub directions: Option<CampusMapDirections>,
     /// The floors are a stack seen at an angle: `stack` holds them, and the
     /// layers and marks hold only what lies on the ground.
     pub stacked: bool,
