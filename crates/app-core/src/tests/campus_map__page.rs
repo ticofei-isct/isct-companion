@@ -163,6 +163,9 @@ fn old_camera_reports_and_floor_changes_never_replace_the_selection() {
         maps: MapsApp::Apple,
     };
     let mut page = Page::open(map.clone(), preferences, Some("W9-202"));
+    // A room opens as the stack; these are the rules of the flat floor.
+    assert!(page.stacked);
+    page.apply(CampusMapIntent::Stack { on: false });
     let key = |page: &Page| page.framing.as_ref().map_or(0, |framing| framing.key);
     let land = |page: &mut Page| {
         let framing = page.framing.clone().expect("a framing");
@@ -282,6 +285,16 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         maps: MapsApp::Google,
     };
     let mut page = Page::open(map.clone(), preferences, Some("W9-324"));
+    // A room on the plans opens as the stack, on the room's floor, framed
+    // whole; a building alone does not.
+    let opened = page.render(1);
+    assert!(opened.stacked);
+    assert!(opened
+        .stack
+        .iter()
+        .any(|floor| floor.shown && !floor.highlight.is_empty()));
+    assert!(!Page::open(map.clone(), preferences, Some("W9")).stacked);
+    assert!(!Page::open(map.clone(), preferences, None).stacked);
     let framing = page.framing.clone().expect("a framing");
     page.apply(CampusMapIntent::Camera {
         camera: camera(&view(rect(framing.bounds)), false),

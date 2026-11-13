@@ -396,6 +396,9 @@ private class FloorPainter(private val view: MapView) {
         val map = map ?: return
         val palette = palette ?: return
         layOut(map)
+        // Before the base map loads and before any framing: a page that
+        // opens as the stack is framed at the stack's angle from the start.
+        tilt(map, scene?.stacked == true)
         levelId = scene?.levelId
         val framing = scene?.framing
         if (framing != null && framing.key > appliedFraming && framing.key != pendingFraming?.key) {
@@ -427,7 +430,6 @@ private class FloorPainter(private val view: MapView) {
         drawMarks(style, scene?.marks.orEmpty())
         val stacked = scene?.stacked == true
         drawStack(style, if (stacked) scene?.stack.orEmpty() else emptyList())
-        tilt(map, stacked)
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
@@ -437,7 +439,9 @@ private class FloorPainter(private val view: MapView) {
         if (stacked == tilted) return
         tilted = stacked
         map.uiSettings.isTiltGesturesEnabled = stacked
-        if (!stacked) map.animateCamera(CameraUpdateFactory.tiltTo(0.0), FRAMING_MS)
+        // Core frames the stack as it turns on, at this angle; tilting here
+        // too covers a framing that has nothing left to move.
+        map.animateCamera(CameraUpdateFactory.tiltTo(if (stacked) STACK_TILT else 0.0), FRAMING_MS)
     }
 
     // Camera

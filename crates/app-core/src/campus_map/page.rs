@@ -108,6 +108,15 @@ impl Page {
             }
         } else {
             page.choose(0);
+            // A room string that names a room on the plans (W9-324, not just
+            // W9) opens as the stack, the room standing out on its floor.
+            if page
+                .targets
+                .first()
+                .is_some_and(|target| target.matched == Match::Room && target.level.is_some())
+            {
+                page.stack(true);
+            }
         }
         page
     }
@@ -341,6 +350,10 @@ impl Page {
                     .map(|level| (building, level))
             });
         self.stacked = true;
+        // The stack shows its floor at once; the framing lands on the same.
+        if floor.is_some() {
+            self.floor = floor;
+        }
         self.frame(self.map.building_bounds(building), floor);
     }
 

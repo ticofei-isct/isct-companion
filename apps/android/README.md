@@ -84,7 +84,8 @@ UniFFI checks signatures when the library loads.
   the shell raises them as MapLibre fill extrusions, the floor picked solid,
   the ones below faint and the ones above nearly clear, with the selected
   room raised in the accent. Entering the stack brings the selected room's
-  floor forward. Each entrance stands as a column on the floor the export
+  floor forward, and a room string that names a room on the plans (from a
+  course or 今日) opens the map as the stack straight away. Each entrance stands as a column on the floor the export
   puts it on (WL2 is entered on 1F and 3F), not on the ground.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
