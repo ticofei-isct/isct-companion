@@ -723,7 +723,7 @@ private class FloorPainter(private val view: MapView) {
         style.addLayer(slab(STACK_BELOW, BELOW, 0.3f))
         style.addLayer(slab(STACK_SHOWN, SHOWN, 0.95f))
         style.addLayer(slab(STACK_HIGHLIGHT, HIGHLIGHT, 1f))
-        style.addLayer(slab(STACK_ABOVE, ABOVE, 0.08f))
+        style.addLayer(slab(STACK_ABOVE, ABOVE, 0.18f))
     }
 
     private fun source(role: CampusMapLayerRole) = "campus-${role.name.lowercase()}"
