@@ -289,12 +289,12 @@ pub struct CampusMapStackFloor {
     pub outline: Vec<CampusMapPolygon>,
     /// Rooms and the other closed spaces.
     pub rooms: Vec<CampusMapPolygon>,
-    /// Corridors, lobbies and the other open spaces.
+    /// Corridors, lobbies, stair halls: the open spaces.
     pub walkways: Vec<CampusMapPolygon>,
-    /// The stairs on this floor, on every floor alike: the export's stair
-    /// halls, and a small square at each stair mark outside them, so a
-    /// stair running through the building lines up floor over floor.
-    pub stairs: Vec<CampusMapPolygon>,
+    /// Where the stairs are on this floor, while it is the floor picked
+    /// (empty on the others), marked as the flat map marks them: each stair
+    /// mark, and the middle of any stair hall with no mark in it.
+    pub stairs: Vec<CampusMapPoint>,
     /// The selected room.
     pub highlight: Vec<CampusMapPolygon>,
     /// The building's entrances on this floor, while it is the floor picked

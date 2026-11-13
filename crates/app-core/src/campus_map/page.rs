@@ -24,9 +24,6 @@ const HOME_CAMPUS: &str = "ookayama";
 /// Metres between floors in the stack: about twice as built, so the plan
 /// of each floor shows between the ones above and below it.
 const STACK_SPACING_M: f64 = 8.0;
-/// The side of the square a stair mark the plan draws no hall for takes in
-/// the stack, metres: about a flight's width.
-const STAIR_MARK_M: f64 = 3.0;
 
 /// What a page reads from the settings when it opens.
 #[derive(Clone, Copy, Debug)]
@@ -421,12 +418,11 @@ impl Page {
                     let shape = polygon(&record.polygon);
                     if lit.contains(unit) {
                         floor.highlight.push(shape);
-                    } else if record.category == UnitCategory::Stairs {
-                        floor.stairs.push(shape);
                     } else if matches!(
                         record.category,
                         UnitCategory::Corridor
                             | UnitCategory::ElevatorLobby
+                            | UnitCategory::Stairs
                             | UnitCategory::Lounge
                             | UnitCategory::Porch
                     ) {
@@ -435,28 +431,33 @@ impl Page {
                         floor.rooms.push(shape);
                     }
                 }
-                // A stair mark inside a stair hall is that hall; any other
-                // is a stair the plan does not draw.
-                let halls: Vec<_> = map
-                    .units_by_level
-                    .get(&source.id)
-                    .into_iter()
-                    .flatten()
-                    .map(|unit| &map.export.units[*unit])
-                    .filter(|unit| unit.category == UnitCategory::Stairs)
-                    .map(|unit| &unit.polygon)
-                    .collect();
-                for amenity in map.amenities_by_level.get(&source.id).into_iter().flatten() {
-                    let amenity = &map.export.amenities[*amenity];
-                    if amenity.category == AmenityCategory::Stairs
-                        && !halls
-                            .iter()
-                            .any(|hall| geometry::polygon_contains(hall, amenity.point))
-                    {
-                        floor
-                            .stairs
-                            .push(polygon(&geometry::square(amenity.point, STAIR_MARK_M)));
-                    }
+                // Like the entrances, the stairs show on the floor picked
+                // only: each stair mark, and the middle of a stair hall the
+                // export puts no mark in.
+                if level == shown {
+                    let marks: Vec<_> = map
+                        .amenities_by_level
+                        .get(&source.id)
+                        .into_iter()
+                        .flatten()
+                        .map(|amenity| &map.export.amenities[*amenity])
+                        .filter(|amenity| amenity.category == AmenityCategory::Stairs)
+                        .map(|amenity| amenity.point)
+                        .collect();
+                    let unmarked = map
+                        .units_by_level
+                        .get(&source.id)
+                        .into_iter()
+                        .flatten()
+                        .map(|unit| &map.export.units[*unit])
+                        .filter(|unit| unit.category == UnitCategory::Stairs)
+                        .filter(|unit| {
+                            !marks
+                                .iter()
+                                .any(|at| geometry::polygon_contains(&unit.polygon, *at))
+                        })
+                        .map(|unit| unit.center);
+                    floor.stairs = marks.iter().copied().chain(unmarked).map(point).collect();
                 }
                 floor
             })
