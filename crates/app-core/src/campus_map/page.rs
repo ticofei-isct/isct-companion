@@ -12,8 +12,7 @@ use super::{
     search::Found,
     CampusMapCamera, CampusMapCandidate, CampusMapCard, CampusMapFraming, CampusMapIntent,
     CampusMapLayer, CampusMapLayerRole, CampusMapLink, CampusMapMark, CampusMapMarkKind,
-    CampusMapPlace, CampusMapPoint, CampusMapScene, CampusMapSearchResult, CampusMapStackEntrance,
-    CampusMapStackFloor,
+    CampusMapPlace, CampusMapPoint, CampusMapScene, CampusMapSearchResult, CampusMapStackFloor,
 };
 use std::sync::Arc;
 
@@ -387,27 +386,6 @@ impl Page {
                     rooms: Vec::new(),
                     walkways: Vec::new(),
                     highlight: Vec::new(),
-                    entrances: record
-                        .entrances
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, entrance)| {
-                            entrance.level_id.as_deref() == Some(source.id.as_str())
-                        })
-                        .map(|(index, entrance)| CampusMapStackEntrance {
-                            entrance_id: entrance.id.clone(),
-                            name: entrance
-                                .name
-                                .as_ref()
-                                .map(|name| name.pick(self.preferences.english).to_owned()),
-                            point: point(entrance.point),
-                            selected: self.selection
-                                == Selection::Entrance {
-                                    building,
-                                    entrance: index,
-                                },
-                        })
-                        .collect(),
                 };
                 for unit in map.units_by_level.get(&source.id).into_iter().flatten() {
                     let record = &map.export.units[*unit];
@@ -675,12 +653,13 @@ impl Page {
         let mut amenities = Vec::new();
         let mut highlighted = Vec::new();
         let selected = self.highlighted();
-        // A stack lies above the ground, where marks are drawn: it carries
-        // its rooms and its entrances on their own floors, and only an
-        // entrance the export puts on no floor of it stays a mark.
+        // The stack is for seeing where a room is, not the way in: it is
+        // drawn with no marks at all.
+        if self.stacked && self.floor.is_some() {
+            return Vec::new();
+        }
         let level_id = self
             .floor
-            .filter(|_| !self.stacked)
             .map(|(building, level)| map.export.buildings[building].levels[level].id.as_str());
         if let Some(level_id) = level_id {
             for index in map.units_by_level.get(level_id).into_iter().flatten() {
@@ -717,17 +696,8 @@ impl Page {
         }
         let mut entrances = Vec::new();
         if let Some(building) = self.entrance_building() {
-            let record = &map.export.buildings[building];
-            let stacked = self.stacked && self.floor.is_some_and(|(shown, _)| shown == building);
-            for (index, entrance) in record.entrances.iter().enumerate() {
+            for (index, entrance) in map.export.buildings[building].entrances.iter().enumerate() {
                 if level_id.is_some() && entrance.level_id.as_deref() != level_id {
-                    continue;
-                }
-                let on_a_floor = record
-                    .levels
-                    .iter()
-                    .any(|level| entrance.level_id.as_deref() == Some(level.id.as_str()));
-                if stacked && on_a_floor {
                     continue;
                 }
                 entrances.push(CampusMapMark {

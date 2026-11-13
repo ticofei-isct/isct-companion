@@ -337,45 +337,14 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         .stack
         .iter()
         .any(|floor| floor.shown && !floor.highlight.is_empty()));
-    // Each entrance stands on the floor the export puts it on; W9 is
-    // entered on more than one floor, and none is flattened to the ground.
-    let record = &map.export.buildings[w9];
-    for entrance in &record.entrances {
-        let on = scene
-            .stack
-            .iter()
-            .filter(|floor| {
-                floor
-                    .entrances
-                    .iter()
-                    .any(|at| at.entrance_id == entrance.id)
-            })
-            .map(|floor| floor.level_id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            on,
-            entrance.level_id.as_deref().into_iter().collect::<Vec<_>>()
-        );
-    }
-    assert!(
-        scene
-            .stack
-            .iter()
-            .filter(|floor| !floor.entrances.is_empty())
-            .count()
-            > 1
-    );
     // Nothing of a floor is left on the ground: no plan layers, and no
-    // marks but the entrances.
+    // marks, entrances included: the stack shows where a room is, not the
+    // way in.
     assert!(scene.layers.iter().all(|layer| matches!(
         layer.role,
         CampusMapLayerRole::Footprint | CampusMapLayerRole::FocusedFootprint
     )));
-    assert!(scene
-        .marks
-        .iter()
-        .all(|mark| matches!(mark.kind, CampusMapMarkKind::Entrance { .. })));
-    assert!(scene.marks.len() < record.entrances.len());
+    assert!(scene.marks.is_empty());
     // Turning the stack is no reason to leave the building.
     let campus = map.campus_bounds("ookayama").expect("ookayama");
     page.apply(CampusMapIntent::Camera {

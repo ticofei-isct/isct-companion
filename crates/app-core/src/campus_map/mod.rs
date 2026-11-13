@@ -293,19 +293,6 @@ pub struct CampusMapStackFloor {
     pub walkways: Vec<CampusMapPolygon>,
     /// The selected room.
     pub highlight: Vec<CampusMapPolygon>,
-    /// The building's entrances on this floor, raised with it: a building
-    /// on a slope is entered on more than one floor.
-    pub entrances: Vec<CampusMapStackEntrance>,
-}
-
-/// An entrance in the stack, on the floor the export puts it on.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CampusMapStackEntrance {
-    pub entrance_id: String,
-    pub name: Option<String>,
-    pub point: CampusMapPoint,
-    pub selected: bool,
 }
 
 /// Everything the map page draws.
