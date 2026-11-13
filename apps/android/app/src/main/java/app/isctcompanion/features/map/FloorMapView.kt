@@ -488,7 +488,10 @@ private class FloorPainter(private val view: MapView) {
     /** Where each stacked entrance shows: its point on the ground, lifted up
      * the screen by its floor's height. A height seen at the camera's tilt
      * covers its sine in ground metres, at the scale the screen has across
-     * that point's own row. */
+     * that point's own row. The icons lie over the map, so an entrance that
+     * a floor above it would hide (the floor picked, or a faint one below
+     * it; the near-clear floors above the one picked hide nothing) is left
+     * out rather than shown through that floor. */
     private fun raise() {
         val map = map ?: return
         val current = scene
@@ -498,23 +501,50 @@ private class FloorPainter(private val view: MapView) {
         }
         val projection = map.projection
         val tilt = sin(Math.toRadians(map.cameraPosition.tilt))
+        fun lifted(point: CampusMapPoint, height: Double): PointF? {
+            val at = LatLng(point.latitude, point.longitude)
+            val ground = projection.toScreenLocation(at)
+            val metres = at.distanceTo(projection.fromScreenLocation(PointF(ground.x + SCALE_PX, ground.y)))
+            if (metres <= 0.0) return null
+            return PointF(ground.x, (ground.y - height * tilt * SCALE_PX / metres).toFloat())
+        }
+        val shownBase = current.stack.firstOrNull { it.shown }?.baseM ?: 0.0
+        // Each floor that hides what is under it, as its outline on screen.
+        val covers = current.stack
+            .filter { it.baseM <= shownBase }
+            .map { floor ->
+                floor.baseM to floor.outline.mapNotNull { shape ->
+                    shape.rings.firstOrNull()?.mapNotNull { lifted(it, floor.baseM + OUTLINE_M) }?.takeIf { it.size > 2 }
+                }
+            }
         val inset = insets()
         val raised = current.stack.flatMap { floor ->
             floor.entrances.mapNotNull { entrance ->
-                val at = LatLng(entrance.point.latitude, entrance.point.longitude)
-                val ground = projection.toScreenLocation(at)
-                val across = projection.fromScreenLocation(PointF(ground.x + SCALE_PX, ground.y))
-                val metres = at.distanceTo(across)
-                if (metres <= 0.0) return@mapNotNull null
-                val x = ground.x
-                val y = ground.y - (floor.baseM + SLAB_M) * tilt * SCALE_PX / metres
-                val inside = x >= inset.left && x <= view.width - inset.right &&
-                    y >= inset.top && y <= view.height - inset.bottom
-                if (!inside) return@mapNotNull null
-                RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, x.roundToInt(), y.roundToInt())
+                val at = lifted(entrance.point, floor.baseM + SLAB_M) ?: return@mapNotNull null
+                val inside = at.x >= inset.left && at.x <= view.width - inset.right &&
+                    at.y >= inset.top && at.y <= view.height - inset.bottom
+                val hidden = covers.any { (base, outlines) ->
+                    base > floor.baseM && outlines.any { ring -> ring.holds(at) }
+                }
+                if (!inside || hidden) return@mapNotNull null
+                RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, at.x.roundToInt(), at.y.roundToInt())
             }
         }
         onRaised(raised)
+    }
+
+    /** Even-odd test of a screen point against a ring of screen points. */
+    private fun List<PointF>.holds(point: PointF): Boolean {
+        var inside = false
+        var previous = last()
+        for (current in this) {
+            if ((current.y > point.y) != (previous.y > point.y)) {
+                val x = (previous.x - current.x) * (point.y - current.y) / (previous.y - current.y) + current.x
+                if (point.x < x) inside = !inside
+            }
+            previous = current
+        }
+        return inside
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
