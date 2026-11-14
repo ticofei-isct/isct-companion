@@ -65,10 +65,11 @@ pub(super) struct Map {
 }
 
 /// Buildings whose main entrance is not on 1F, by export id, with the
-/// floor's ordinal (1F = 0): the west side of Ookayama is on a slope. From
-/// the Science Tokyo accessibility map (ssc.titech.ac.jp/amap), which names
-/// the main entrance of these, and W9's from the person checking it. Every
-/// other building is taken to be entered on 1F.
+/// floor's ordinal (1F = 0): the west side of Ookayama is on a slope. The
+/// west buildings' from the Science Tokyo accessibility map
+/// (ssc.titech.ac.jp/amap), which names their main entrance; W9's and
+/// J2・J3's checked by hand. Every other building is taken to be entered
+/// on 1F.
 const MAIN_ENTRANCE_FLOORS: &[(&str, i32)] = &[
     // 大岡山西2号館 and 西3号館 share one main entrance.
     ("8b4ebd3a-63d4-5cc0-8d7d-e96828ecbd79", 2),
@@ -85,6 +86,8 @@ const MAIN_ENTRANCE_FLOORS: &[(&str, i32)] = &[
     ("7b91641d-f38f-4489-b557-48b20c7fc378", 2),
     // 大岡山西9号館
     ("a10026fc-4e59-55a7-9d89-0193f1749620", 1),
+    // J2・J3棟 (Suzukakedai), entered on 2F and 3F only.
+    ("5d48b79d-6509-5b23-a0fd-8873883617ce", 1),
 ];
 
 /// How much of a room string the map knows.
