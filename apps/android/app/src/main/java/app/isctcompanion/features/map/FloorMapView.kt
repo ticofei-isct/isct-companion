@@ -597,8 +597,22 @@ private class FloorPainter(private val view: MapView) {
         tilted = stacked
         map.uiSettings.isTiltGesturesEnabled = stacked
         // Core frames the stack as it turns on, at this angle; tilting here
-        // too covers a framing that has nothing left to move.
+        // too covers a framing that has nothing left to move. The tilt is
+        // this painter's own move, like a framing: reported as the
+        // person's, it would send Core looking for a building in the
+        // view and lose the floor of the selected room.
+        val ownMove = !framingActive
+        framingActive = true
         map.animateCamera(CameraUpdateFactory.tiltTo(if (stacked) STACK_TILT else 0.0), FRAMING_MS)
+        // A tilt that moves nothing never comes to rest; as for a framing,
+        // it is acknowledged once a real move would have ended.
+        if (ownMove) view.postDelayed({
+            if (framingActive && !cameraMoving) {
+                framingActive = false
+                report(byUser = false)
+                applyFraming()
+            }
+        }, 2L * FRAMING_MS)
     }
 
     // Camera

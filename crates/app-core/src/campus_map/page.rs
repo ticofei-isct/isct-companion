@@ -318,6 +318,13 @@ impl Page {
     fn stack(&mut self, on: bool) {
         if !on {
             self.stacked = false;
+            // Back on the flat map the selected room stays in view: its
+            // floor comes forward, as it did in the stack.
+            if let Some((building, _)) = self.floor {
+                if let Some(level) = self.room_floor(building) {
+                    self.floor = Some((building, level));
+                }
+            }
             return;
         }
         let Some(building) = self
@@ -330,17 +337,7 @@ impl Page {
         };
         // The selected room's floor comes forward, so the room stands out
         // in the stack; else the floor already shown, else the ground.
-        let room_floor = match &self.selection {
-            Selection::Unit {
-                building: owner,
-                level,
-                ..
-            } if *owner == building => Some(*level),
-            _ => self
-                .selected_target()
-                .filter(|target| target.building == building && target.matched == Match::Room)
-                .and_then(|target| target.level),
-        };
+        let room_floor = self.room_floor(building);
         let floor = room_floor
             .map(|level| (building, level))
             .or_else(|| self.floor.filter(|(shown, _)| *shown == building))
@@ -362,6 +359,22 @@ impl Page {
         let levels = &self.map.export.buildings[building].levels;
         let lowest = levels.iter().map(|level| level.ordinal).min().unwrap_or(0);
         f64::from(levels[level].ordinal - lowest) * STACK_SPACING_M
+    }
+
+    /// The floor of `building` the selected room is on, if the selection is
+    /// a room there.
+    fn room_floor(&self, building: usize) -> Option<usize> {
+        match &self.selection {
+            Selection::Unit {
+                building: owner,
+                level,
+                ..
+            } if *owner == building => Some(*level),
+            _ => self
+                .selected_target()
+                .filter(|target| target.building == building && target.matched == Match::Room)
+                .and_then(|target| target.level),
+        }
     }
 
     /// Every floor of the stacked building, lowest first.

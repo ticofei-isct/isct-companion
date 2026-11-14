@@ -398,6 +398,32 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         framing: page.framing.as_ref().map_or(0, |framing| framing.key),
     });
     assert_eq!(page.floor.map(|(building, _)| building), Some(w9));
+    // Back on the flat map, from another floor of the stack: the room is
+    // still selected, its floor comes forward and it is drawn lit; the
+    // camera settling from the angle (not the person's move) keeps it.
+    page.apply(CampusMapIntent::Level {
+        id: entered.id.clone(),
+    });
+    assert_ne!(page.floor, Some(shown));
     page.apply(CampusMapIntent::Stack { on: false });
-    assert!(!page.render(1).stacked);
+    assert_eq!(page.floor, Some(shown));
+    page.apply(CampusMapIntent::Camera {
+        camera: camera(&view(map.building_bounds(w9)), false),
+        framing: page.framing.as_ref().map_or(0, |framing| framing.key),
+    });
+    assert_eq!(page.floor, Some(shown));
+    let flat = page.render(1);
+    assert!(!flat.stacked);
+    assert!(flat
+        .layers
+        .iter()
+        .any(|layer| layer.role == CampusMapLayerRole::Highlight && !layer.polygons.is_empty()));
+    // And into the stack again, the room's floor forward.
+    page.apply(CampusMapIntent::Stack { on: true });
+    assert_eq!(page.floor, Some(shown));
+    assert!(page
+        .render(1)
+        .stack
+        .iter()
+        .any(|floor| floor.shown && !floor.highlight.is_empty()));
 }
