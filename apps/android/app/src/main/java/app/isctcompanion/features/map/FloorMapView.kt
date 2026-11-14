@@ -33,6 +33,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -61,6 +64,7 @@ import app.isctcompanion.core.CampusMapMarkKind
 import app.isctcompanion.core.CampusMapPlace
 import app.isctcompanion.core.CampusMapPoint
 import app.isctcompanion.core.CampusMapPolygon
+import app.isctcompanion.core.CampusMapRoute
 import app.isctcompanion.core.CampusMapScene
 import app.isctcompanion.core.CampusMapStackFloor
 import app.isctcompanion.design.LocalReducedMotion
@@ -129,6 +133,8 @@ fun FloorMapView(
     onTap: (CampusMapPoint, String?) -> Unit,
     onSelect: (CampusMapPlace) -> Unit,
     modifier: Modifier = Modifier,
+    /** Filled in with a way to read the blue dot's place. */
+    position: PositionReader? = null,
 ) {
     val context = LocalContext.current
     val palette = Theme.colors
@@ -144,6 +150,7 @@ fun FloorMapView(
     var raised by remember { mutableStateOf(emptyList<RaisedEntrance>()) }
     var rooms by remember { mutableStateOf(emptyList<RaisedRoom>()) }
     var sunk by remember { mutableStateOf(emptyList<SunkFloor>()) }
+    var route by remember { mutableStateOf(emptyList<RaisedLeg>()) }
     SideEffect {
         painter.insets = insets
         painter.onCamera = onCamera
@@ -153,6 +160,8 @@ fun FloorMapView(
         painter.onRaised = { raised = it }
         painter.onRooms = { rooms = it }
         painter.onSunk = { sunk = it }
+        painter.onRoute = { route = it }
+        position?.read = painter::position
     }
     MapLifecycle(view)
     DisposableEffect(view) {
@@ -168,7 +177,48 @@ fun FloorMapView(
         SpokenMarks(placed, onSelect)
         SunkFloors(sunk)
         RaisedRooms(rooms)
+        RaisedRoute(route)
         RaisedEntrances(raised, onSelect)
+    }
+}
+
+/** Reads the person's place from the map's blue dot: `null` until the map
+ * has one. */
+class PositionReader {
+    internal var read: () -> CampusMapPoint? = { null }
+    fun now(): CampusMapPoint? = read()
+}
+
+/** A stretch of the route in the stack, in screen pixels at its floor's
+ * height: a leg on a floor, or the climb between two. */
+private data class RaisedLeg(val points: List<Offset>, val shown: Boolean, val dashed: Boolean)
+
+/** The route through the stack, laid over the map like the selected room,
+ * so no floor hides it: the leg on the floor picked solid, the others
+ * fainter, and a guessed stretch or the climb between floors dashed. */
+@Composable
+private fun RaisedRoute(legs: List<RaisedLeg>) {
+    if (legs.isEmpty()) return
+    val accent = Theme.colors.accent
+    val casing = Theme.colors.surface
+    Drawing(Modifier.fillMaxSize()) {
+        val width = 4.dp.toPx()
+        val dashes = PathEffect.dashPathEffect(floatArrayOf(2 * width, 2 * width))
+        for (leg in legs) {
+            if (leg.points.size < 2) continue
+            val path = Path().apply {
+                moveTo(leg.points[0].x, leg.points[0].y)
+                for (point in leg.points.drop(1)) lineTo(point.x, point.y)
+            }
+            val alpha = if (leg.shown) 1f else 0.55f
+            if (!leg.dashed) {
+                drawPath(path, casing, alpha = alpha, style = Stroke(width + 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+            drawPath(
+                path, accent, alpha = alpha,
+                style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = if (leg.dashed) dashes else null),
+            )
+        }
     }
 }
 
@@ -438,6 +488,7 @@ private class FloorPainter(private val view: MapView) {
     var onRaised: (List<RaisedEntrance>) -> Unit = {}
     var onRooms: (List<RaisedRoom>) -> Unit = {}
     var onSunk: (List<SunkFloor>) -> Unit = {}
+    var onRoute: (List<RaisedLeg>) -> Unit = {}
 
     private val context = view.context
     private val density = context.resources.displayMetrics.density
@@ -470,6 +521,7 @@ private class FloorPainter(private val view: MapView) {
     private var drawnMarks: List<CampusMapMark>? = null
     /** The stack as last drawn, and whether the camera is tilted for it. */
     private var drawnStack: List<CampusMapStackFloor>? = null
+    private var drawnRoute: Triple<CampusMapRoute?, String?, Boolean>? = null
     private var tilted = false
 
     init {
@@ -586,6 +638,8 @@ private class FloorPainter(private val view: MapView) {
             style = null
             drawn.clear()
             drawnMarks = null
+            drawnStack = null
+            drawnRoute = null
             map.setStyle(Style.Builder().fromUri(if (dark) DARK_STYLE else LIGHT_STYLE)) { loaded ->
                 if (appearance == next && this.map != null) {
                     prepare(loaded, palette)
@@ -601,6 +655,7 @@ private class FloorPainter(private val view: MapView) {
         drawMarks(style, scene?.marks.orEmpty())
         val stacked = scene?.stacked == true
         drawStack(style, if (stacked) scene?.stack.orEmpty() else emptyList())
+        drawRoute(style, scene)
         raise()
     }
 
@@ -616,6 +671,7 @@ private class FloorPainter(private val view: MapView) {
             onRaised(emptyList())
             onRooms(emptyList())
             onSunk(emptyList())
+            onRoute(emptyList())
             return
         }
         val projection = map.projection
@@ -665,6 +721,30 @@ private class FloorPainter(private val view: MapView) {
             )
         }
         onSunk(sunk)
+        // The route's legs at their floors' heights, and a climb from each
+        // leg's end to the next one's start.
+        val legs = current.route?.legs.orEmpty()
+        val raisedLegs = mutableListOf<RaisedLeg>()
+        legs.forEachIndexed { index, leg ->
+            val height = leg.baseM + SLAB_M
+            val points = leg.points.mapNotNull { point -> lifted(point, height)?.let { Offset(it.x, it.y) } }
+            raisedLegs += RaisedLeg(points, leg.levelId == current.levelId, leg.blind)
+            val next = legs.getOrNull(index + 1) ?: return@forEachIndexed
+            val from = leg.points.lastOrNull()?.let { lifted(it, height) }
+            val to = next.points.firstOrNull()?.let { lifted(it, next.baseM + SLAB_M) }
+            if (from != null && to != null) {
+                raisedLegs += RaisedLeg(listOf(Offset(from.x, from.y), Offset(to.x, to.y)), shown = false, dashed = true)
+            }
+        }
+        onRoute(raisedLegs)
+    }
+
+    /** The blue dot's place, once MapLibre has one. */
+    fun position(): CampusMapPoint? {
+        val map = map ?: return null
+        if (positionStyle == null || !showsPosition) return null
+        return runCatching { map.locationComponent.lastKnownLocation }.getOrNull()
+            ?.let { CampusMapPoint(latitude = it.latitude, longitude = it.longitude) }
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
@@ -861,6 +941,34 @@ private class FloorPainter(private val view: MapView) {
                     PropertyFactory.textAllowOverlap(true),
                 ),
         )
+        // The route: on the ground outdoors and, on a single floor, that
+        // floor's leg; a guessed stretch dashed. In the stack the legs are
+        // laid over the map instead (`RaisedRoute`).
+        style.addSource(GeoJsonSource(ROUTE))
+        val solid = Expression.neq(Expression.get("dashed"), Expression.literal(true))
+        style.addLayer(
+            LineLayer(ROUTE_CASING, ROUTE).withFilter(solid).withProperties(
+                PropertyFactory.lineColor(palette.surface.toArgb()),
+                PropertyFactory.lineWidth(7f),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            ),
+        )
+        style.addLayer(
+            LineLayer(ROUTE_LINE, ROUTE).withFilter(solid).withProperties(
+                PropertyFactory.lineColor(palette.accent.toArgb()),
+                PropertyFactory.lineWidth(4f),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            ),
+        )
+        style.addLayer(
+            LineLayer(ROUTE_DASHED, ROUTE).withFilter(Expression.eq(Expression.get("dashed"), Expression.literal(true))).withProperties(
+                PropertyFactory.lineColor(palette.accent.toArgb()),
+                PropertyFactory.lineWidth(4f),
+                PropertyFactory.lineDasharray(arrayOf(1.5f, 1.5f)),
+            ),
+        )
         // The stack. Each layer has one opacity, so the floors are split by
         // where they sit against the floor picked: below it faint, so they
         // show through; above it nearly clear, so the floor picked is never
@@ -932,6 +1040,33 @@ private class FloorPainter(private val view: MapView) {
             style.getSourceAs<GeoJsonSource>(source(role))?.setGeoJson(collection(features))
             drawn[role] = ids
         }
+    }
+
+    /** The route's lines on the ground: outdoors always; indoors the leg of
+     * the floor shown, when one floor is. */
+    private fun drawRoute(style: Style, scene: CampusMapScene?) {
+        val route = scene?.route
+        val stacked = scene?.stacked == true
+        val key = Triple(route, scene?.levelId, stacked)
+        if (drawnRoute == key) return
+        drawnRoute = key
+        val features = mutableListOf<String>()
+        fun line(points: List<CampusMapPoint>, dashed: Boolean) {
+            if (points.size < 2) return
+            features += buildString {
+                append("""{"type":"Feature","properties":{"dashed":""").append(dashed)
+                append("""},"geometry":{"type":"LineString","coordinates":""")
+                path(points)
+                append("}}")
+            }
+        }
+        if (route != null) {
+            line(route.outdoor, dashed = false)
+            if (!stacked) {
+                for (leg in route.legs) if (leg.levelId == scene?.levelId) line(leg.points, leg.blind)
+            }
+        }
+        style.getSourceAs<GeoJsonSource>(ROUTE)?.setGeoJson(collection(features))
     }
 
     private fun collection(features: List<String>) =
@@ -1119,6 +1254,10 @@ private class FloorPainter(private val view: MapView) {
         const val ENTRANCES = "campus-entrances"
         const val LIT_LABELS = "campus-labels-lit"
         const val STACK = "campus-stack"
+        const val ROUTE = "campus-route"
+        const val ROUTE_CASING = "campus-route-casing"
+        const val ROUTE_LINE = "campus-route-line"
+        const val ROUTE_DASHED = "campus-route-dashed"
         const val STACK_BELOW = "campus-stack-below"
         const val STACK_SHOWN = "campus-stack-shown"
         const val STACK_ABOVE = "campus-stack-above"

@@ -514,7 +514,46 @@ fn a_stack_lifts_every_floor_off_the_ground() {
     assert_eq!(page.floor, Some(shown));
     assert!(lit(&page));
     assert_eq!(page.marked_level(), Some(shown.1));
-    // Closing the card lets it go.
+    // A route to the room: the way in from W9's entrance, floor by
+    // floor at the stack's heights, kept while floors are picked and put
+    // away when something else is selected.
+    page.apply(CampusMapIntent::Select {
+        place: CampusMapPlace::Room {
+            id: map
+                .export
+                .rooms
+                .iter()
+                .find(|room| room.code == "W9-324")
+                .expect("W9-324")
+                .id
+                .clone(),
+        },
+    });
+    page.apply(CampusMapIntent::Route { from: None });
+    let scene = page.render(1);
+    let found = scene.route.as_ref().expect("a route to W9-324");
+    assert!(found.complete && found.outdoor.is_empty());
+    assert_eq!(
+        found.legs.last().map(|leg| leg.level_id.clone()),
+        Some(levels[shown.1].id.clone())
+    );
+    for leg in &found.legs {
+        let floor = scene
+            .stack
+            .iter()
+            .find(|floor| floor.level_id == leg.level_id)
+            .expect("the leg's floor is in the stack");
+        assert_eq!(leg.base_m, floor.base_m);
+    }
+    page.apply(CampusMapIntent::Level {
+        id: entered.id.clone(),
+    });
+    assert!(page.render(1).route.is_some());
+    page.apply(CampusMapIntent::Select {
+        place: CampusMapPlace::Building { id: WL1.to_owned() },
+    });
+    assert!(page.render(1).route.is_none());
+    // Closing the card lets the room go.
     page.apply(CampusMapIntent::Clear);
     assert!(!lit(&page));
 }

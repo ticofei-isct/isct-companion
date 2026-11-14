@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Directions
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.MyLocation
@@ -91,6 +92,7 @@ import app.isctcompanion.core.CampusMapCandidate
 import app.isctcompanion.core.CampusMapCard
 import app.isctcompanion.core.CampusMapIntent
 import app.isctcompanion.core.CampusMapLevel
+import app.isctcompanion.core.CampusMapRoute
 import app.isctcompanion.core.CampusMapLink
 import app.isctcompanion.core.CampusMapOpening
 import app.isctcompanion.core.CampusMapScene
@@ -153,6 +155,9 @@ fun CampusMapScreen(room: String?) {
     var searchFailure by remember { mutableStateOf<String?>(null) }
     var pickingResult by remember { mutableStateOf(false) }
     val position = rememberPosition()
+    val whereabouts = remember { PositionReader() }
+    // A route was asked for and Core found none to draw.
+    var routeMissing by remember { mutableStateOf(false) }
 
     val searching = searchFocused || query.isNotEmpty()
     val card = scene?.card
@@ -193,6 +198,7 @@ fun CampusMapScreen(room: String?) {
     }
     // A new place opens unfolded.
     LaunchedEffect(card == null) { if (card == null) cardExpanded = true }
+    LaunchedEffect(card?.title, card?.buildingName) { routeMissing = false }
 
     fun send(intent: CampusMapIntent, done: ((CampusMapScene?) -> Unit)? = null) {
         if (scene != null) intents.trySend(Sent(intent, done))
@@ -255,6 +261,7 @@ fun CampusMapScreen(room: String?) {
             onTap = { point, level -> selectOnMap(CampusMapIntent.Tap(point, level)) },
             onSelect = { selectOnMap(CampusMapIntent.Select(it)) },
             modifier = Modifier.fillMaxSize(),
+            position = whereabouts,
         )
         Box(
             Modifier
@@ -388,6 +395,16 @@ fun CampusMapScreen(room: String?) {
                         }
                         card != null && cardExpanded -> CardDetails(
                             card,
+                            route = scene?.route,
+                            routeMissing = routeMissing,
+                            // From the blue dot when the person shows it; else
+                            // Core draws the way in from the entrance.
+                            findRoute = {
+                                send(CampusMapIntent.Route(if (position.allowed) whereabouts.now() else null)) { next ->
+                                    routeMissing = next?.route == null
+                                }
+                            },
+                            endRoute = { send(CampusMapIntent.RouteEnd) },
                             openLink = { openInMaps(context, it.url) },
                             choose = { send(CampusMapIntent.Choose(it.toUInt())) },
                         )
@@ -532,7 +549,15 @@ private fun CardHeader(card: CampusMapCard, expanded: Boolean, fold: (Boolean) -
 
 /** Details below the place header, while the card is unfolded. */
 @Composable
-private fun CardDetails(card: CampusMapCard, openLink: (CampusMapLink) -> Unit, choose: (Int) -> Unit) {
+private fun CardDetails(
+    card: CampusMapCard,
+    route: CampusMapRoute?,
+    routeMissing: Boolean,
+    findRoute: () -> Unit,
+    endRoute: () -> Unit,
+    openLink: (CampusMapLink) -> Unit,
+    choose: (Int) -> Unit,
+) {
     Column(
         Modifier.padding(start = Theme.cardPadding, end = Theme.cardPadding, bottom = Theme.cardPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -548,8 +573,38 @@ private fun CardDetails(card: CampusMapCard, openLink: (CampusMapLink) -> Unit, 
         } else if (card.noFloorPlans) {
             Text(t("campusMap.noFloorPlans"), style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted)
         }
+        RouteRow(route, routeMissing, findRoute, endRoute)
         Links(card.links, openLink)
         if (card.candidates.isNotEmpty()) Candidates(card.candidates, choose)
+    }
+}
+
+/** The way there, worked out on the device: a button to ask for it, then
+ * how long it is, what it leaves out, and a button to put it away. */
+@Composable
+private fun RouteRow(route: CampusMapRoute?, missing: Boolean, find: () -> Unit, end: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (route == null) {
+            ActionButton(t("campusMap.route"), onClick = find, level = ButtonLevel.Primary, icon = Icons.Rounded.Directions)
+            if (missing) {
+                Text(t("campusMap.routeNone"), style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted)
+            }
+        } else {
+            Text(
+                t("campusMap.routeSummary", "minutes" to route.minutes.toString(), "metres" to route.metres.toString()),
+                style = MaterialTheme.typography.bodyMedium.tabular(), fontWeight = FontWeight.SemiBold, color = Theme.colors.ink,
+            )
+            val floors = route.legs.map { it.levelName }.distinct()
+            val note = when {
+                !route.complete && route.levelName != null -> t("campusMap.routeToEntrance", "floor" to route.levelName.orEmpty())
+                !route.complete -> null
+                route.outdoor.isEmpty() -> t("campusMap.routeFromEntrance")
+                floors.size > 1 -> floors.joinToString(" → ")
+                else -> null
+            }
+            if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = Theme.colors.muted)
+            ActionButton(t("campusMap.routeEnd"), onClick = end, level = ButtonLevel.Secondary)
+        }
     }
 }
 

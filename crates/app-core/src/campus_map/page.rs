@@ -9,11 +9,13 @@ use super::{
     export::{LineTone, UnitCategory},
     geometry::{self, Viewport},
     map::{maps_url, point, polygon, rect_bounds, Map, MapsApp, Match, Target, TAP_SLOP_POINTS},
+    route::{self, Shaft},
     search::Found,
     CampusMapCamera, CampusMapCandidate, CampusMapCard, CampusMapFraming, CampusMapIntent,
     CampusMapLayer, CampusMapLayerRole, CampusMapLevel, CampusMapLink, CampusMapMark,
-    CampusMapMarkKind, CampusMapPlace, CampusMapPoint, CampusMapScene, CampusMapSearchResult,
-    CampusMapStackEntrance, CampusMapStackFloor,
+    CampusMapMarkKind, CampusMapPlace, CampusMapPoint, CampusMapRoute, CampusMapRouteLeg,
+    CampusMapScene, CampusMapSearchResult, CampusMapShaft, CampusMapStackEntrance,
+    CampusMapStackFloor,
 };
 use std::sync::Arc;
 
@@ -63,6 +65,7 @@ struct Shown {
     selection: Selection,
     framing: u64,
     stacked: bool,
+    route: u64,
 }
 
 pub(super) struct Page {
@@ -77,6 +80,9 @@ pub(super) struct Page {
     /// way back to it shows it still. Another room, a unit or closing the
     /// card replaces it.
     room: Option<Target>,
+    /// The route asked for, and a count that rises each time it changes.
+    route: Option<CampusMapRoute>,
+    routes: u64,
     framing: Option<CampusMapFraming>,
     /// The floor to show once the latest framing lands (the app's own camera
     /// report for it); `Some(None)` shows none.
@@ -101,6 +107,8 @@ impl Page {
             floor: None,
             selection: Selection::None,
             room: None,
+            route: None,
+            routes: 0,
             framing: None,
             arrival: None,
             view: None,
@@ -129,6 +137,7 @@ impl Page {
     }
 
     pub(super) fn apply(&mut self, intent: CampusMapIntent) {
+        let selected = self.selection.clone();
         match intent {
             CampusMapIntent::Choose { index } => self.choose(index as usize),
             CampusMapIntent::Camera { camera, framing } => self.camera(&camera, framing),
@@ -137,8 +146,91 @@ impl Page {
             CampusMapIntent::Select { place } => self.select(&place),
             CampusMapIntent::Clear => self.selection = Selection::None,
             CampusMapIntent::Stack { on } => self.stack(on),
+            CampusMapIntent::Route { from } => self.find_route(from),
+            CampusMapIntent::RouteEnd => self.end_route(),
+        }
+        // A route is to what was selected when it was asked for.
+        if self.selection != selected {
+            self.end_route();
         }
         self.keep_room();
+    }
+
+    fn end_route(&mut self) {
+        if self.route.take().is_some() {
+            self.routes += 1;
+        }
+    }
+
+    /// Works out the way to the selection: to its room when the plans show
+    /// the way, else to its building's entrance.
+    fn find_route(&mut self, from: Option<CampusMapPoint>) {
+        let map = self.map.clone();
+        let (building, unit, entrance) = match &self.selection {
+            Selection::None => return,
+            Selection::Unit { unit, building, .. } => (*building, Some(*unit), None),
+            Selection::Building(building) => (*building, None, None),
+            Selection::Entrance { building, entrance } => (*building, None, Some(*entrance)),
+            Selection::Target(_) | Selection::Room(_) => {
+                let Some(target) = self.selected_target() else {
+                    return;
+                };
+                // The room's unit on the floor it is shown on.
+                let unit = target.level.and_then(|level| {
+                    let id = &map.export.buildings[target.building].levels[level].id;
+                    target
+                        .units
+                        .iter()
+                        .copied()
+                        .find(|unit| &map.export.units[*unit].level_id == id)
+                });
+                (target.building, unit, None)
+            }
+        };
+        let from = from.map(|at| [at.longitude, at.latitude]);
+        let plan = route::plan(&map, route::walkways(), from, building, unit, entrance);
+        self.routes += 1;
+        self.route = plan.map(|plan| {
+            let record = &map.export.buildings[building];
+            // Four and a half kilometres an hour, a quarter of a minute a
+            // floor of stairs, a minute a lift.
+            let minutes =
+                plan.metres / 75.0 + 0.25 * f64::from(plan.stair_floors) + f64::from(plan.lifts);
+            CampusMapRoute {
+                outdoor: plan.outdoor.iter().copied().map(point).collect(),
+                legs: plan
+                    .legs
+                    .iter()
+                    .map(|leg| {
+                        let level = &record.levels[leg.level];
+                        CampusMapRouteLeg {
+                            level_id: level.id.clone(),
+                            level_name: level.name.clone(),
+                            base_m: self.base_m(building, level.ordinal),
+                            points: leg.points.iter().copied().map(point).collect(),
+                            blind: leg.blind,
+                            leaves_by: leg.leaves_by.map(|shaft| match shaft {
+                                Shaft::Stairs => CampusMapShaft::Stairs,
+                                Shaft::Lift => CampusMapShaft::Lift,
+                            }),
+                        }
+                    })
+                    .collect(),
+                metres: plan.metres.round() as u32,
+                minutes: (minutes.ceil() as u32).max(1),
+                entrance_id: plan
+                    .entrance
+                    .map(|entrance| record.entrances[entrance].id.clone()),
+                complete: plan.complete,
+                level_name: unit.and_then(|unit| {
+                    record
+                        .levels
+                        .iter()
+                        .find(|level| level.id == map.export.units[unit].level_id)
+                        .map(|level| level.name.clone())
+                }),
+            }
+        });
     }
 
     /// Remembers the room selected; a building or an entrance picked since
@@ -172,6 +264,7 @@ impl Page {
             selection: self.selection.clone(),
             framing: self.framing.as_ref().map_or(0, |framing| framing.key),
             stacked: self.stacked,
+            route: self.routes,
         };
         if self.shown.as_ref() == Some(&shown) {
             return None;
@@ -592,6 +685,7 @@ impl Page {
             attribution: map.export.attribution.clone(),
             stacked: self.stacked && floor.is_some(),
             stack: self.stack_floors(),
+            route: self.route.clone(),
         }
     }
 

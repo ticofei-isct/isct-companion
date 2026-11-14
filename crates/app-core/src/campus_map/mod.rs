@@ -17,6 +17,7 @@ mod geometry;
 mod map;
 mod matching;
 mod page;
+mod route;
 mod search;
 
 use crate::data::{DataError, DataStore};
@@ -149,6 +150,12 @@ pub enum CampusMapIntent {
     /// Turned the floors of the building in view into a stack seen at an
     /// angle (`true`), or back into the one floor seen from above.
     Stack { on: bool },
+    /// Asked for the way to what is selected: from `from`, the person's
+    /// position, when the shell knows it; else only the way in from the
+    /// building's entrance.
+    Route { from: Option<CampusMapPoint> },
+    /// Put the route away.
+    RouteEnd,
 }
 
 /// What a layer of the scene is, which decides its colours: shells map each
@@ -308,6 +315,53 @@ pub struct CampusMapStackFloor {
     pub entrances: Vec<CampusMapStackEntrance>,
 }
 
+/// How a route goes from one floor to the next.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CampusMapShaft {
+    Stairs,
+    Lift,
+}
+
+/// A route's stretch on one floor, in walking order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CampusMapRouteLeg {
+    pub level_id: String,
+    pub level_name: String,
+    /// The floor's height in the stack, as [`CampusMapStackFloor::base_m`].
+    pub base_m: f64,
+    pub points: Vec<CampusMapPoint>,
+    /// Across a floor whose corridors the plans do not draw: a straight
+    /// guess from the entrance to the stair or lift, drawn as one.
+    pub blind: bool,
+    /// How the next leg's floor is reached from this leg's end; `None` on
+    /// the last.
+    pub leaves_by: Option<CampusMapShaft>,
+}
+
+/// A walking route to what is selected, worked out on the device from the
+/// bundled walkways (OpenStreetMap) and the floor plans.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CampusMapRoute {
+    /// On the ground, from the person's position to the entrance; empty
+    /// when the route was asked for without a position.
+    pub outdoor: Vec<CampusMapPoint>,
+    /// Through the building, the entrance's floor first; empty when the
+    /// way indoors is not known.
+    pub legs: Vec<CampusMapRouteLeg>,
+    pub metres: u32,
+    pub minutes: u32,
+    /// The entrance the route goes in by.
+    pub entrance_id: Option<String>,
+    /// False when a room was asked for and the plans do not show the way to
+    /// it: the route ends at the entrance, and `level_name` is the room's
+    /// floor, for the shell to say.
+    pub complete: bool,
+    pub level_name: Option<String>,
+}
+
 /// An entrance in the stack, on the floor the export puts it on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -349,6 +403,8 @@ pub struct CampusMapScene {
     pub stacked: bool,
     /// The building's floors, lowest first, while `stacked`.
     pub stack: Vec<CampusMapStackFloor>,
+    /// The route asked for, until the selection changes or it is put away.
+    pub route: Option<CampusMapRoute>,
 }
 
 /// One search answer.

@@ -90,6 +90,15 @@ UniFFI checks signatures when the library loads.
   map's icons, drawn over the map at the height of the floor the export puts
   each on, and only on the floor picked (WL2 shows one entrance on 1F, the
   other on 3F); nothing else is marked.
+- This fork's map draws walking routes (the card's Route button), worked
+  out in Core with no service asked (`campus_map/route.rs`): outdoors over a
+  bundled OpenStreetMap extract of the campus walkways (`walkways.txt`,
+  built by `scripts/campus-map/walkways.py`), from the blue dot when it is
+  shown; indoors over a 0.25 m grid of the floor plans, on the floors whose
+  corridors are drawn, floor to floor at the stairs and lifts the plans
+  mark. A room on a floor with no corridors drawn gets a route to the
+  entrance and its floor's name. One floor shows the leg of that floor; the
+  stack shows every leg at its floor's height.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
 - The quarter export is a share button in the 時間割 header rather than a long
