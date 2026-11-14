@@ -66,6 +66,10 @@ pub struct CampusMapLevel {
     pub ordinal: i32,
     /// `B1`, `2F`.
     pub name: String,
+    /// The export has its plan. In the stack the picker also lists the
+    /// floors between two with plans (W9's 4F to 6F), which have none and
+    /// cannot be picked.
+    pub has_plan: bool,
 }
 
 /// Where the camera settled after a move: the part of the map the person
@@ -281,11 +285,16 @@ pub struct CampusMapFraming {
 pub struct CampusMapStackFloor {
     pub level_id: String,
     pub name: String,
-    /// Metres above the lowest floor's slab: floors are spread further
-    /// apart than built so the plans between them stay readable.
+    /// Metres above the ground: floors are spread further apart than built
+    /// so the plans between them stay readable, and every building's street
+    /// floor (the one it is most entered on) is at one height on its campus,
+    /// so a building on a slope stands as high as it feels.
     pub base_m: f64,
     /// The floor picked in the level picker, drawn solid; the others faint.
     pub shown: bool,
+    /// False for a floor between two with plans that the export has no plan
+    /// of: only the building's footprint marks where it is.
+    pub has_plan: bool,
     pub outline: Vec<CampusMapPolygon>,
     /// Rooms and the other closed spaces.
     pub rooms: Vec<CampusMapPolygon>,

@@ -321,25 +321,86 @@ impl Map {
     }
 
     pub(super) fn level_models(&self, building: usize) -> Vec<CampusMapLevel> {
-        let levels = &self.export.buildings[building].levels;
         self.level_order(building)
             .into_iter()
-            .map(|index| CampusMapLevel {
-                id: levels[index].id.clone(),
-                ordinal: levels[index].ordinal,
-                name: levels[index].name.clone(),
+            .map(|index| self.level_model(building, index))
+            .collect()
+    }
+
+    pub(super) fn level_model(&self, building: usize, level: usize) -> CampusMapLevel {
+        let level = &self.export.buildings[building].levels[level];
+        CampusMapLevel {
+            id: level.id.clone(),
+            ordinal: level.ordinal,
+            name: level.name.clone(),
+            has_plan: true,
+        }
+    }
+
+    /// Every ordinal from a building's lowest floor to its highest, lowest
+    /// first, with the level of that ordinal where the export has a plan:
+    /// W9's 1F to 7F, 4F to 6F without.
+    pub(super) fn stack_levels(&self, building: usize) -> Vec<(i32, Option<usize>)> {
+        let levels = &self.export.buildings[building].levels;
+        let (Some(lowest), Some(highest)) = (
+            levels.iter().map(|level| level.ordinal).min(),
+            levels.iter().map(|level| level.ordinal).max(),
+        ) else {
+            return Vec::new();
+        };
+        (lowest..=highest)
+            .map(|ordinal| {
+                (
+                    ordinal,
+                    levels.iter().position(|level| level.ordinal == ordinal),
+                )
             })
             .collect()
     }
 
-    /// The ground floor, else the floor nearest the ground, above it on a
-    /// tie.
-    pub(super) fn ground_level(&self, building: usize) -> Option<usize> {
-        let levels = &self.export.buildings[building].levels;
-        (0..levels.len()).min_by_key(|index| {
-            let ordinal = levels[*index].ordinal;
-            (ordinal.unsigned_abs(), ordinal < 0)
+    /// The floor that feels like the ground floor: the one the building is
+    /// most often entered on, the floor nearest 1F on a tie; without
+    /// entrances, the floor nearest 1F. On a slope that is not always 1F
+    /// (W3 and WL1 are entered on 3F). Nearest 1F means above it on a tie.
+    pub(super) fn street_level(&self, building: usize) -> Option<usize> {
+        let record = &self.export.buildings[building];
+        (0..record.levels.len()).min_by_key(|index| {
+            let level = &record.levels[*index];
+            let entrances = record
+                .entrances
+                .iter()
+                .filter(|entrance| entrance.level_id.as_deref() == Some(level.id.as_str()))
+                .count();
+            (
+                std::cmp::Reverse(entrances),
+                level.ordinal.unsigned_abs(),
+                level.ordinal < 0,
+            )
         })
+    }
+
+    /// The street floor's ordinal, 0 for a building without floors.
+    pub(super) fn street_ordinal(&self, building: usize) -> i32 {
+        self.street_level(building).map_or(0, |level| {
+            self.export.buildings[building].levels[level].ordinal
+        })
+    }
+
+    /// How many floors the deepest building of `campus` has below its
+    /// street floor: the stack lifts every street floor by as many, so
+    /// they all sit at one height and none goes under the ground.
+    pub(super) fn street_depth(&self, campus: &str) -> i32 {
+        self.export
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| record.campus == campus)
+            .filter_map(|(index, record)| {
+                let lowest = record.levels.iter().map(|level| level.ordinal).min()?;
+                Some(self.street_ordinal(index) - lowest)
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     pub(super) fn name(&self, building: usize, english: bool) -> String {
@@ -440,8 +501,9 @@ impl Map {
 
     /// The floor shown on arriving at `building` from the floor `from`: the
     /// same floor when it is that building's (a floor change stays), else
-    /// the one with the same ordinal, else the ground floor, else the floor
-    /// nearest the ground. No building remembers a floor of its own.
+    /// the one as many floors above (or below) its street floor, else the
+    /// street floor ([`Map::street_level`]). No building remembers a floor
+    /// of its own.
     pub(super) fn arrival_level(
         &self,
         from: Option<(usize, usize)>,
@@ -450,7 +512,12 @@ impl Map {
         if let Some((_, level)) = from.filter(|(shown, _)| *shown == building) {
             return Some(level);
         }
-        let ordinal = from.map(|(from, level)| self.export.buildings[from].levels[level].ordinal);
+        // Another building opens as high above its street as the floor
+        // left was above its own: on a slope 3F of one is 1F of another.
+        let ordinal = from.map(|(from, level)| {
+            self.export.buildings[from].levels[level].ordinal - self.street_ordinal(from)
+                + self.street_ordinal(building)
+        });
         ordinal
             .and_then(|ordinal| {
                 self.export.buildings[building]
@@ -458,7 +525,7 @@ impl Map {
                     .iter()
                     .position(|level| level.ordinal == ordinal)
             })
-            .or_else(|| self.ground_level(building))
+            .or_else(|| self.street_level(building))
     }
 
     /// The places a search query names, best first.
@@ -658,7 +725,7 @@ impl Map {
                     .any(|unit| level_of(*unit) == Some(*level))
             })
             .or(hinted)
-            .or_else(|| self.ground_level(building));
+            .or_else(|| self.street_level(building));
         let shown: Vec<&Rings> = highlighted
             .iter()
             .filter(|unit| level.is_some() && level_of(**unit) == level)

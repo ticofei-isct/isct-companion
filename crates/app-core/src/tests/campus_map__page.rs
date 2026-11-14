@@ -12,6 +12,8 @@ use crate::campus_map::{
 
 /// 大岡山西9号館.
 const W9: &str = "a10026fc-4e59-55a7-9d89-0193f1749620";
+/// 大岡山西講義棟1, entered on 3F, up the slope from W9.
+const WL1: &str = "95e63ef0-8ebc-5502-87ed-1f414753ce93";
 /// 屋内運動場, south-west of W9 and smaller.
 const SPORTS_CENTER: &str = "3a605ae0-88df-4574-aadf-56da13339a23";
 /// Inside W9's footprint, 6 m from the sports center's.
@@ -74,7 +76,7 @@ fn small_zooms_near_the_threshold_never_flicker_the_floor() {
     let w9 = building(&map, W9);
     let center = map.export.buildings[w9].center;
     assert_eq!(map.building_containing(center, true), Some(w9));
-    let ground = map.ground_level(w9).map(|level| (w9, level));
+    let ground = map.street_level(w9).map(|level| (w9, level));
 
     // The whole campus in view, its centre inside W9: no floor.
     let campus = map.campus_bounds("ookayama").expect("ookayama");
@@ -322,7 +324,64 @@ fn a_stack_lifts_every_floor_off_the_ground() {
     let scene = page.render(1);
     assert!(scene.stacked);
     let levels = &map.export.buildings[w9].levels;
-    assert_eq!(scene.stack.len(), levels.len());
+    // Every floor from the lowest to the highest, the ones between without
+    // a plan (W9 has 1F to 3F and 7F) only an outline, listed in the
+    // picker but not to be picked.
+    let lowest = levels
+        .iter()
+        .map(|level| level.ordinal)
+        .min()
+        .expect("floors");
+    let highest = levels
+        .iter()
+        .map(|level| level.ordinal)
+        .max()
+        .expect("floors");
+    assert_eq!(scene.stack.len(), (highest - lowest + 1) as usize);
+    let gaps: Vec<_> = scene.stack.iter().filter(|floor| !floor.has_plan).collect();
+    assert_eq!(gaps.len(), scene.stack.len() - levels.len());
+    assert!(!gaps.is_empty());
+    assert!(gaps.iter().all(|floor| !floor.shown
+        && !floor.outline.is_empty()
+        && floor.rooms.is_empty()
+        && floor.highlight.is_empty()
+        && !map.levels.contains_key(&floor.level_id)));
+    assert_eq!(
+        scene
+            .levels
+            .iter()
+            .map(|level| (level.name.clone(), level.has_plan))
+            .collect::<Vec<_>>(),
+        scene
+            .stack
+            .iter()
+            .rev()
+            .map(|floor| (floor.name.clone(), floor.has_plan))
+            .collect::<Vec<_>>()
+    );
+    let before = page.floor;
+    page.apply(CampusMapIntent::Level {
+        id: gaps[0].level_id.clone(),
+    });
+    assert_eq!(page.floor, before);
+    // Every street floor of the campus at one height: W9 is entered on
+    // 1F, WL1 up the slope on 3F, and both stand there.
+    let wl1 = building(&map, WL1);
+    let street = |index: usize| {
+        let record = &map.export.buildings[index];
+        let level = map.street_level(index).expect("floors");
+        page.base_m(index, record.levels[level].ordinal)
+    };
+    assert_eq!(
+        map.export.buildings[w9].levels[map.street_level(w9).expect("floors")].name,
+        "1F"
+    );
+    assert_eq!(
+        map.export.buildings[wl1].levels[map.street_level(wl1).expect("floors")].name,
+        "3F"
+    );
+    assert_eq!(street(w9), street(wl1));
+    assert!(scene.stack.iter().all(|floor| floor.base_m >= 0.0));
     // Lowest first, each above the last, the shown floor solid.
     assert!(scene
         .stack
@@ -421,9 +480,37 @@ fn a_stack_lifts_every_floor_off_the_ground() {
     // And into the stack again, the room's floor forward.
     page.apply(CampusMapIntent::Stack { on: true });
     assert_eq!(page.floor, Some(shown));
-    assert!(page
-        .render(1)
-        .stack
-        .iter()
-        .any(|floor| floor.shown && !floor.highlight.is_empty()));
+    let lit = |page: &Page| {
+        page.render(1)
+            .stack
+            .iter()
+            .any(|floor| floor.shown && !floor.highlight.is_empty())
+    };
+    assert!(lit(&page));
+    // Another building and back: the room is kept, and W9 opens on its
+    // floor with the room lit, the picker marking that floor.
+    page.apply(CampusMapIntent::Select {
+        place: CampusMapPlace::Building { id: WL1.to_owned() },
+    });
+    let framing = page.framing.clone().expect("WL1's framing");
+    page.apply(CampusMapIntent::Camera {
+        camera: camera(&view(rect(framing.bounds)), false),
+        framing: framing.key,
+    });
+    assert_eq!(page.floor.map(|(building, _)| building), Some(wl1));
+    assert!(page.render(1).stacked);
+    page.apply(CampusMapIntent::Select {
+        place: CampusMapPlace::Building { id: W9.to_owned() },
+    });
+    let framing = page.framing.clone().expect("W9's framing");
+    page.apply(CampusMapIntent::Camera {
+        camera: camera(&view(rect(framing.bounds)), false),
+        framing: framing.key,
+    });
+    assert_eq!(page.floor, Some(shown));
+    assert!(lit(&page));
+    assert_eq!(page.marked_level(), Some(shown.1));
+    // Closing the card lets it go.
+    page.apply(CampusMapIntent::Clear);
+    assert!(!lit(&page));
 }
