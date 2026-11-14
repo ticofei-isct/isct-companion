@@ -64,6 +64,29 @@ pub(super) struct Map {
     search: Index,
 }
 
+/// Buildings whose main entrance is not on 1F, by export id, with the
+/// floor's ordinal (1F = 0): the west side of Ookayama is on a slope. From
+/// the Science Tokyo accessibility map (ssc.titech.ac.jp/amap), which names
+/// the main entrance of these, and W9's from the person checking it. Every
+/// other building is taken to be entered on 1F.
+const MAIN_ENTRANCE_FLOORS: &[(&str, i32)] = &[
+    // 大岡山西2号館 and 西3号館 share one main entrance.
+    ("8b4ebd3a-63d4-5cc0-8d7d-e96828ecbd79", 2),
+    ("0fd2e106-94b0-55fd-90b0-b01485426ecd", 2),
+    // 大岡山西4号館
+    ("9df4e073-cfbe-4522-a7f8-ca16a171557f", 2),
+    // 大岡山西7号館
+    ("8b59ffed-7f7e-417e-b3d3-21b326c26578", 2),
+    // 大岡山西講義棟1, 西講義棟2
+    ("95e63ef0-8ebc-5502-87ed-1f414753ce93", 2),
+    ("dbf173b6-c53e-5d4c-92ca-eea95bac4ae0", 2),
+    // 大岡山西8号館 (E) and (W), joined on the main entrance's floor.
+    ("7eb7b2c0-8013-530a-8a7d-3efe2da6f375", 2),
+    ("7b91641d-f38f-4489-b557-48b20c7fc378", 2),
+    // 大岡山西9号館
+    ("a10026fc-4e59-55a7-9d89-0193f1749620", 1),
+];
+
 /// How much of a room string the map knows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Match {
@@ -358,32 +381,32 @@ impl Map {
             .collect()
     }
 
-    /// The floor that feels like the ground floor: the one the building is
-    /// most often entered on, the floor nearest 1F on a tie; without
-    /// entrances, the floor nearest 1F. On a slope that is not always 1F
-    /// (W3 and WL1 are entered on 3F). Nearest 1F means above it on a tie.
+    /// The floor that feels like the ground floor: the one the main
+    /// entrance is on ([`MAIN_ENTRANCE_FLOORS`]), else 1F; for a building
+    /// with no plan of that floor, the floor nearest it, above on a tie.
     pub(super) fn street_level(&self, building: usize) -> Option<usize> {
-        let record = &self.export.buildings[building];
-        (0..record.levels.len()).min_by_key(|index| {
-            let level = &record.levels[*index];
-            let entrances = record
-                .entrances
-                .iter()
-                .filter(|entrance| entrance.level_id.as_deref() == Some(level.id.as_str()))
-                .count();
-            (
-                std::cmp::Reverse(entrances),
-                level.ordinal.unsigned_abs(),
-                level.ordinal < 0,
-            )
+        let street = self.street_ordinal(building);
+        let levels = &self.export.buildings[building].levels;
+        (0..levels.len()).min_by_key(|index| {
+            let offset = levels[*index].ordinal - street;
+            (offset.unsigned_abs(), offset < 0)
         })
     }
 
-    /// The street floor's ordinal, 0 for a building without floors.
+    /// The main entrance's floor as an ordinal: the listed one, else 1F
+    /// when the plans have it, else the floor with a plan nearest 1F (S6,
+    /// East 1, entered on 2F, have plans of nothing lower).
     pub(super) fn street_ordinal(&self, building: usize) -> i32 {
-        self.street_level(building).map_or(0, |level| {
-            self.export.buildings[building].levels[level].ordinal
-        })
+        let record = &self.export.buildings[building];
+        if let Some((_, ordinal)) = MAIN_ENTRANCE_FLOORS.iter().find(|(id, _)| *id == record.id) {
+            return *ordinal;
+        }
+        record
+            .levels
+            .iter()
+            .map(|level| level.ordinal)
+            .min_by_key(|ordinal| (ordinal.unsigned_abs(), *ordinal < 0))
+            .unwrap_or(0)
     }
 
     /// How many floors the deepest building of `campus` has below its

@@ -364,8 +364,8 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         id: gaps[0].level_id.clone(),
     });
     assert_eq!(page.floor, before);
-    // Every street floor of the campus at one height: W9 is entered on
-    // 1F, WL1 up the slope on 3F, and both stand there.
+    // Every street floor of the campus at one height: W9's main entrance
+    // is on 2F, WL1's up the slope on 3F, and both stand there.
     let wl1 = building(&map, WL1);
     let street = |index: usize| {
         let record = &map.export.buildings[index];
@@ -374,7 +374,7 @@ fn a_stack_lifts_every_floor_off_the_ground() {
     };
     assert_eq!(
         map.export.buildings[w9].levels[map.street_level(w9).expect("floors")].name,
-        "1F"
+        "2F"
     );
     assert_eq!(
         map.export.buildings[wl1].levels[map.street_level(wl1).expect("floors")].name,
