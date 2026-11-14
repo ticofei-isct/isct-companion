@@ -388,12 +388,10 @@ impl Page {
     }
 
     /// A floor's height in the stack, by its ordinal: its rank above the
-    /// building's street floor, every street floor of the campus lifted to
-    /// one height ([`Map::street_depth`]).
+    /// building's street floor, which lies on the ground; a floor below the
+    /// street is under it, at a negative height.
     fn base_m(&self, building: usize, ordinal: i32) -> f64 {
-        let campus = &self.map.export.buildings[building].campus;
-        let rank = ordinal - self.map.street_ordinal(building) + self.map.street_depth(campus);
-        f64::from(rank) * STACK_SPACING_M
+        f64::from(ordinal - self.map.street_ordinal(building)) * STACK_SPACING_M
     }
 
     /// The floor of `building` the selected room is on, if the selection is

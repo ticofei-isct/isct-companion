@@ -143,6 +143,7 @@ fun FloorMapView(
     var placed by remember { mutableStateOf(emptyList<PlacedMark>()) }
     var raised by remember { mutableStateOf(emptyList<RaisedEntrance>()) }
     var rooms by remember { mutableStateOf(emptyList<RaisedRoom>()) }
+    var sunk by remember { mutableStateOf(emptyList<SunkFloor>()) }
     SideEffect {
         painter.insets = insets
         painter.onCamera = onCamera
@@ -151,6 +152,7 @@ fun FloorMapView(
         painter.onPlaced = { placed = it }
         painter.onRaised = { raised = it }
         painter.onRooms = { rooms = it }
+        painter.onSunk = { sunk = it }
     }
     MapLifecycle(view)
     DisposableEffect(view) {
@@ -164,8 +166,63 @@ fun FloorMapView(
             update = { painter.show(scene, palette, dark, chrome, canFrame, showsPosition, follows, animates) },
         )
         SpokenMarks(placed, onSelect)
+        SunkFloors(sunk)
         RaisedRooms(rooms)
         RaisedEntrances(raised, onSelect)
+    }
+}
+
+/** A floor under the street, in screen pixels, while a floor under the
+ * street is picked: its outline, walkways and rooms, each an outer ring at
+ * the floor's height. */
+private data class SunkFloor(
+    val outline: List<List<Offset>>,
+    val walkways: List<List<Offset>>,
+    val rooms: List<List<Offset>>,
+    val shown: Boolean,
+    /** Above the floor picked: only its outline, as in the stack. */
+    val above: Boolean,
+)
+
+/** The floors under the street. MapLibre cannot raise a shape below the
+ * ground, so these are laid over the map, under a veil that dims the
+ * ground and the floors above it: the floors are seen through the ground.
+ * Drawn only while a floor under the street is picked; the deepest first,
+ * so the ones above lie over it. */
+@Composable
+private fun SunkFloors(floors: List<SunkFloor>) {
+    if (floors.isEmpty()) return
+    val colors = Theme.colors
+    Box(Modifier.fillMaxSize().background(colors.bg.copy(alpha = GROUND_VEIL)))
+    for (floor in floors) {
+        Drawing(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = when {
+                        floor.shown -> 0.95f
+                        floor.above -> 0.25f
+                        else -> 0.35f
+                    }
+                    compositingStrategy = CompositingStrategy.Offscreen
+                },
+        ) {
+            fun ring(points: List<Offset>) = Path().apply {
+                moveTo(points[0].x, points[0].y)
+                for (point in points.drop(1)) lineTo(point.x, point.y)
+                close()
+            }
+            val hairline = Stroke(width = 1.dp.toPx())
+            for (shape in floor.outline) {
+                drawPath(ring(shape), colors.surface)
+                drawPath(ring(shape), colors.line, style = hairline)
+            }
+            for (shape in floor.walkways) drawPath(ring(shape), colors.accentSoft)
+            for (shape in floor.rooms) {
+                drawPath(ring(shape), colors.surface2)
+                drawPath(ring(shape), colors.line, style = hairline)
+            }
+        }
     }
 }
 
@@ -304,6 +361,9 @@ private const val SHOWN_ROOM_OPACITY = 0.9f
 /** The selected room on a floor other than the one picked, above or below
  * it: one value for both. */
 private const val OTHER_FLOOR_ROOM_OPACITY = 0.5f
+/** How much the ground and the floors above it fade while a floor under the
+ * street is picked. */
+private const val GROUND_VEIL = 0.55f
 
 /** A `MapView` is told each lifecycle step by its host; this one lives as
  * long as the map page's destination. */
@@ -377,6 +437,7 @@ private class FloorPainter(private val view: MapView) {
     /** The stack's entrances in view and where their floors put them. */
     var onRaised: (List<RaisedEntrance>) -> Unit = {}
     var onRooms: (List<RaisedRoom>) -> Unit = {}
+    var onSunk: (List<SunkFloor>) -> Unit = {}
 
     private val context = view.context
     private val density = context.resources.displayMetrics.density
@@ -554,6 +615,7 @@ private class FloorPainter(private val view: MapView) {
         if (current == null || !current.stacked) {
             onRaised(emptyList())
             onRooms(emptyList())
+            onSunk(emptyList())
             return
         }
         val projection = map.projection
@@ -587,6 +649,22 @@ private class FloorPainter(private val view: MapView) {
             RaisedRoom(floors, tops, floor.shown)
         }
         onRooms(rooms)
+        val shownBase = current.stack.firstOrNull { it.shown }?.baseM ?: 0.0
+        val sunk = if (shownBase >= 0.0) emptyList() else current.stack.filter { it.baseM < 0.0 }.mapNotNull { floor ->
+            val height = floor.baseM + SLAB_M
+            fun rings(polygons: List<CampusMapPolygon>): List<List<Offset>>? = polygons.mapNotNull { shape ->
+                shape.rings.firstOrNull()?.takeIf { it.size >= 3 }
+            }.map { ring -> ring.map { point -> lifted(point, height)?.let { Offset(it.x, it.y) } ?: return null } }
+            val above = floor.baseM > shownBase
+            SunkFloor(
+                outline = rings(floor.outline) ?: return@mapNotNull null,
+                walkways = if (above) emptyList() else rings(floor.walkways) ?: return@mapNotNull null,
+                rooms = if (above) emptyList() else rings(floor.rooms) ?: return@mapNotNull null,
+                shown = floor.shown,
+                above = above,
+            )
+        }
+        onSunk(sunk)
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
@@ -957,6 +1035,9 @@ private class FloorPainter(private val view: MapView) {
         val shownBase = floors.firstOrNull { it.shown }?.baseM ?: 0.0
         val features = mutableListOf<String>()
         for (floor in floors) {
+            // A floor under the street is laid over the map (`SunkFloors`):
+            // MapLibre raises nothing below the ground.
+            if (floor.baseM < 0.0) continue
             val place = when {
                 floor.shown -> SHOWN
                 floor.baseM < shownBase -> BELOW

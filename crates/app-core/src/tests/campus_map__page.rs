@@ -364,8 +364,8 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         id: gaps[0].level_id.clone(),
     });
     assert_eq!(page.floor, before);
-    // Every street floor of the campus at one height: W9's main entrance
-    // is on 2F, WL1's up the slope on 3F, and both stand there.
+    // Every street floor on the ground: W9's main entrance is on 2F,
+    // WL1's up the slope on 3F. W9's 1F is under the ground.
     let wl1 = building(&map, WL1);
     let street = |index: usize| {
         let record = &map.export.buildings[index];
@@ -380,8 +380,12 @@ fn a_stack_lifts_every_floor_off_the_ground() {
         map.export.buildings[wl1].levels[map.street_level(wl1).expect("floors")].name,
         "3F"
     );
-    assert_eq!(street(w9), street(wl1));
-    assert!(scene.stack.iter().all(|floor| floor.base_m >= 0.0));
+    assert_eq!(street(w9), 0.0);
+    assert_eq!(street(wl1), 0.0);
+    assert!(scene
+        .stack
+        .iter()
+        .any(|floor| floor.name == "1F" && floor.base_m < 0.0));
     // Lowest first, each above the last, the shown floor solid.
     assert!(scene
         .stack

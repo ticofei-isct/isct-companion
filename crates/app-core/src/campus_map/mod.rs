@@ -286,9 +286,9 @@ pub struct CampusMapStackFloor {
     pub level_id: String,
     pub name: String,
     /// Metres above the ground: floors are spread further apart than built
-    /// so the plans between them stay readable, and every building's street
-    /// floor (the one it is most entered on) is at one height on its campus,
-    /// so a building on a slope stands as high as it feels.
+    /// so the plans between them stay readable. Every building's street
+    /// floor (its main entrance's) is on the ground, so a building on a
+    /// slope stands as it feels; a floor below the street is negative.
     pub base_m: f64,
     /// The floor picked in the level picker, drawn solid; the others faint.
     pub shown: bool,

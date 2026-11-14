@@ -412,23 +412,6 @@ impl Map {
             .unwrap_or(0)
     }
 
-    /// How many floors the deepest building of `campus` has below its
-    /// street floor: the stack lifts every street floor by as many, so
-    /// they all sit at one height and none goes under the ground.
-    pub(super) fn street_depth(&self, campus: &str) -> i32 {
-        self.export
-            .buildings
-            .iter()
-            .enumerate()
-            .filter(|(_, record)| record.campus == campus)
-            .filter_map(|(index, record)| {
-                let lowest = record.levels.iter().map(|level| level.ordinal).min()?;
-                Some(self.street_ordinal(index) - lowest)
-            })
-            .max()
-            .unwrap_or(0)
-    }
-
     pub(super) fn name(&self, building: usize, english: bool) -> String {
         self.export.buildings[building]
             .name
