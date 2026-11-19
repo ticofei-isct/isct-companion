@@ -73,6 +73,10 @@ pub struct CampusMapLevel {
     /// The floor the building's main entrance is on, entered from the
     /// street: the picker marks it.
     pub street: bool,
+    /// The export has its plan. In the stack the picker also lists the
+    /// floors between two with plans (W9's 4F to 6F), which have none and
+    /// cannot be picked.
+    pub has_plan: bool,
 }
 
 /// Where the camera settled after the person moved it: the part of the map
@@ -148,6 +152,9 @@ pub enum CampusMapIntent {
     Select { place: CampusMapPlace },
     /// Closed the card: nothing is selected.
     Clear,
+    /// Shows the building's floors as a stack seen at an angle, or one floor
+    /// again.
+    Stack { on: bool },
     /// The person asked where they are; `point` is the system's position.
     /// The building holding it, else the nearest within a short walk, is
     /// selected and framed on its floor; farther off, only the position is
@@ -362,6 +369,56 @@ pub struct CampusMapScene {
     pub framing: Option<CampusMapFraming>,
     /// The data's credit lines (OpenStreetMap, ODbL), shown on the map.
     pub attribution: Vec<String>,
+    /// The floors are a stack seen at an angle: `stack` holds them, and the
+    /// layers and marks hold only what lies on the ground.
+    pub stacked: bool,
+    /// The building's floors, lowest first, while `stacked`.
+    pub stack: Vec<CampusMapStackFloor>,
+    /// The ground around the stacked building, at its street floor's height
+    /// (0): its footprint's box with some ground around it. Floors under the
+    /// street are drawn below it, seen through it.
+    pub stack_ground: Option<CampusMapPolygon>,
+}
+
+/// One floor of the stack: shapes the shell raises to `base_m`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CampusMapStackFloor {
+    pub level_id: String,
+    pub name: String,
+    /// Metres above the ground: floors are spread further apart than built
+    /// (8 m a storey) so the plans between them stay readable. The street
+    /// floor (its main entrance's) is on the ground, so a building on a
+    /// slope stands as it feels; a floor below the street is negative.
+    pub base_m: f64,
+    /// The floor picked in the level picker, drawn solid; the others faint.
+    pub shown: bool,
+    /// The street floor, at 0: it lies on the ground.
+    pub street: bool,
+    /// False for a floor between two with plans that the export has no plan
+    /// of: only the building's footprint marks where it is.
+    pub has_plan: bool,
+    pub outline: Vec<CampusMapPolygon>,
+    /// Rooms and the other closed spaces.
+    pub rooms: Vec<CampusMapPolygon>,
+    /// Corridors, lobbies, stair halls: the open spaces.
+    pub walkways: Vec<CampusMapPolygon>,
+    /// The selected room.
+    pub highlight: Vec<CampusMapPolygon>,
+    /// The building's entrances on this floor, while it is the floor picked
+    /// (empty on the others): a building on a slope is entered on more than
+    /// one floor, each shown with its own.
+    pub entrances: Vec<CampusMapStackEntrance>,
+}
+
+/// An entrance in the stack, on the floor the export puts it on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CampusMapStackEntrance {
+    pub entrance_id: String,
+    pub name: Option<String>,
+    pub point: CampusMapPoint,
+    pub selected: bool,
 }
 
 /// One search answer.
@@ -519,6 +576,7 @@ impl CampusMapService {
                     .pointer("/settings/mapsApp")
                     .and_then(serde_json::Value::as_str),
             ),
+            stacks: cfg!(target_os = "android"),
         })
     }
 

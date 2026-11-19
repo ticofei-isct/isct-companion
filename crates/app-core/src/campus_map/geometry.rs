@@ -245,6 +245,14 @@ pub(super) fn at_least(rect: Rect, metres: f64) -> Rect {
     ]
 }
 
+/// `rect` grown by `metres` on every side.
+pub(super) fn grown(rect: Rect, metres: f64) -> Rect {
+    let lat = (rect[1] + rect[3]) / 2.0;
+    let lng = metres / (lat.to_radians().cos() * METRES_PER_DEGREE_LNG);
+    let lat = metres / METRES_PER_DEGREE_LAT;
+    [rect[0] - lng, rect[1] - lat, rect[2] + lng, rect[3] + lat]
+}
+
 #[cfg(test)]
 #[path = "../tests/campus_map__geometry.rs"]
 mod tests;

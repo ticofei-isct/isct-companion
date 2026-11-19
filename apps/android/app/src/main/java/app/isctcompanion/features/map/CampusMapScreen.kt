@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.rounded.GpsFixed
+import androidx.compose.material.icons.rounded.Layers
 import android.location.LocationManager
 import android.annotation.SuppressLint
 import app.isctcompanion.core.CampusMapPoint
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -316,6 +318,29 @@ fun CampusMapScreen(room: String?) {
                     )
                     .width(Control),
             ) {
+                // The building's floors as a stack seen at an angle, and back
+                // (this fork).
+                val stacked = scene.stacked
+                val stackLabel = t(if (stacked) "campusMap.stackOff" else "campusMap.stackOn")
+                Box(
+                    Modifier
+                        .size(Control)
+                        .floating(RoundedCornerShape(Theme.radiusChip))
+                        .background(if (stacked) Theme.colors.accent else Color.Transparent)
+                        .clickable(role = Role.Button) { send(CampusMapIntent.Stack(!stacked)) }
+                        .semantics {
+                            contentDescription = stackLabel
+                            this.selected = stacked
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.Layers, null,
+                        tint = if (stacked) Theme.colors.accentInk else Theme.colors.ink,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Spacer(Modifier.height(with(density) { gap.toDp() }))
                 LevelPicker(scene.levels, scene.levelId, scene.markedLevelId, Modifier.weight(1f, fill = false)) {
                     haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
                     send(CampusMapIntent.Level(it))
@@ -805,7 +830,8 @@ private fun SearchRow(result: CampusMapSearchResult, pick: () -> Unit) {
 /** Floors top floor first. A dot marks the floor the selected room is on,
  * the entrance icon the floor the building is entered on from the street. A
  * tall building scrolls within the space the page leaves, keeping the floor
- * shown in view. */
+ * shown in view. A floor with no plan (the stack lists the ones between two
+ * that have one) is greyed and cannot be picked. */
 @Composable
 private fun LevelPicker(
     levels: List<CampusMapLevel>,
@@ -833,7 +859,7 @@ private fun LevelPicker(
                 Modifier
                     .size(Control)
                     .background(if (isSelected) Theme.colors.accent else Color.Transparent)
-                    .clickable(role = Role.Button) { pick(level.id) }
+                    .clickable(enabled = level.hasPlan, role = Role.Button) { pick(level.id) }
                     .semantics {
                         contentDescription = spoken
                         stateDescription = state
@@ -844,7 +870,11 @@ private fun LevelPicker(
                 Text(
                     level.name,
                     style = MaterialTheme.typography.bodySmall.tabular(), fontWeight = FontWeight.SemiBold,
-                    color = if (isSelected) Theme.colors.accentInk else Theme.colors.ink,
+                    color = when {
+                        isSelected -> Theme.colors.accentInk
+                        level.hasPlan -> Theme.colors.ink
+                        else -> Theme.colors.muted.copy(alpha = 0.5f)
+                    },
                     maxLines = 1,
                 )
                 if (level.id == marked) {

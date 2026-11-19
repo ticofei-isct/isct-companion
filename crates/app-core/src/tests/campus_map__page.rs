@@ -20,6 +20,7 @@ const BY_THE_SPORTS_CENTER: [f64; 2] = [139.6821654, 35.6057532];
 const PREFERENCES: Preferences = Preferences {
     language: ContentLanguage::Ja,
     maps: MapsApp::Apple,
+    stacks: false,
 };
 
 fn map() -> Arc<Map> {
@@ -442,4 +443,118 @@ fn locate_picks_the_building_the_person_stands_in_or_near() {
     let around = far.framing.expect("a framing");
     assert_ne!(around.key, framed.key);
     assert!(around.bounds.west < 139.0 && around.bounds.east > 139.0);
+}
+
+#[test]
+#[ignore = "needs the published export in ISCT_CAMPUS_MAP_EXPORT"]
+fn a_room_on_the_plans_opens_as_a_stack_about_its_street_floor() {
+    let map = map();
+    let w9 = map.buildings[W9];
+    let record = &map.export.buildings[w9];
+    // Where the shell draws no stack (iOS) the room opens on one floor.
+    let flat = Page::open(map.clone(), PREFERENCES, Some("W9-324"));
+    assert!(!flat.render(1).stacked);
+    let stacks = Preferences {
+        stacks: true,
+        ..PREFERENCES
+    };
+    let mut page = Page::open(map.clone(), stacks, Some("W9-324"));
+    let scene = page.render(1);
+    assert!(scene.stacked);
+    let shown = page.floor.expect("the room's floor");
+    assert_eq!(shown.0, w9);
+    // Nothing of a floor on the ground: footprints only, no marks.
+    assert!(scene.marks.is_empty());
+    assert!(scene.layers.iter().all(|layer| matches!(
+        layer.role,
+        CampusMapLayerRole::Footprint | CampusMapLayerRole::FocusedFootprint
+    )));
+    // Every floor from the lowest to the highest, lowest first, a storey
+    // apart; the street floor (the export's) at 0, those under it below.
+    let ordinals: Vec<i32> = record.levels.iter().map(|level| level.ordinal).collect();
+    let (lowest, highest) = (
+        *ordinals.iter().min().expect("floors"),
+        *ordinals.iter().max().expect("floors"),
+    );
+    assert_eq!(scene.stack.len(), (highest - lowest + 1) as usize);
+    assert!(scene
+        .stack
+        .windows(2)
+        .all(|pair| pair[1].base_m - pair[0].base_m == STACK_SPACING_M));
+    let street = map.street_level(w9).expect("W9's street floor");
+    let streets: Vec<_> = scene.stack.iter().filter(|floor| floor.street).collect();
+    assert_eq!(streets.len(), 1);
+    assert_eq!(streets[0].level_id, record.levels[street].id);
+    assert_eq!(streets[0].base_m, 0.0);
+    assert!(scene.stack[0].base_m < 0.0 || record.levels[street].ordinal == lowest);
+    // The room's floor is picked and carries the room; floors with no plan
+    // are listed but cannot be picked.
+    let picked: Vec<_> = scene.stack.iter().filter(|floor| floor.shown).collect();
+    assert_eq!(picked.len(), 1);
+    assert_eq!(picked[0].level_id, record.levels[shown.1].id);
+    assert!(!picked[0].highlight.is_empty());
+    let gaps: Vec<_> = scene.stack.iter().filter(|floor| !floor.has_plan).collect();
+    assert_eq!(gaps.len(), scene.stack.len() - record.levels.len());
+    assert!(!gaps.is_empty(), "W9 has floors between its plans");
+    assert_eq!(
+        scene
+            .levels
+            .iter()
+            .map(|level| (level.name.clone(), level.has_plan))
+            .collect::<Vec<_>>(),
+        scene
+            .stack
+            .iter()
+            .rev()
+            .map(|floor| (floor.name.clone(), floor.has_plan))
+            .collect::<Vec<_>>()
+    );
+    send(
+        &mut page,
+        CampusMapIntent::Level {
+            id: gaps[0].level_id.clone(),
+        },
+    );
+    assert_eq!(page.floor, Some(shown));
+    // The ground around the building holds its whole footprint.
+    let ground = scene.stack_ground.as_ref().expect("the ground around W9");
+    let rings: Vec<Vec<[f64; 2]>> = ground
+        .rings
+        .iter()
+        .map(|ring| ring.iter().map(|at| [at.longitude, at.latitude]).collect())
+        .collect();
+    assert!(record
+        .footprint
+        .iter()
+        .flatten()
+        .flatten()
+        .all(|point| geometry::polygon_contains(&rings, *point)));
+    // Turning the stack is no reason to leave the building.
+    let campus = map.campus_bounds("ookayama").expect("ookayama");
+    look(&mut page, &view(campus));
+    assert_eq!(page.floor, Some(shown));
+    // Another floor, then one floor again: the room's floor comes forward,
+    // the room still lit; and into the stack again on it.
+    let other = record
+        .levels
+        .iter()
+        .find(|level| level.id != record.levels[shown.1].id)
+        .expect("W9 has several floors");
+    send(
+        &mut page,
+        CampusMapIntent::Level {
+            id: other.id.clone(),
+        },
+    );
+    assert_ne!(page.floor, Some(shown));
+    let flat = send(&mut page, CampusMapIntent::Stack { on: false });
+    assert!(!flat.stacked && flat.stack.is_empty());
+    assert_eq!(page.floor, Some(shown));
+    assert!(flat
+        .layers
+        .iter()
+        .any(|layer| layer.role == CampusMapLayerRole::Highlight && !layer.polygons.is_empty()));
+    let again = send(&mut page, CampusMapIntent::Stack { on: true });
+    assert!(again.stacked);
+    assert_eq!(page.floor, Some(shown));
 }
