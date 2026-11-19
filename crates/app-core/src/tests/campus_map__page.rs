@@ -382,6 +382,23 @@ fn a_stack_lifts_every_floor_off_the_ground() {
     );
     assert_eq!(street(w9), 0.0);
     assert_eq!(street(wl1), 0.0);
+    // The street floor is marked, and the ground drawn around the building
+    // at its height holds the whole footprint.
+    let streets: Vec<_> = scene.stack.iter().filter(|floor| floor.street).collect();
+    assert_eq!(streets.len(), 1);
+    assert_eq!((streets[0].name.as_str(), streets[0].base_m), ("2F", 0.0));
+    let ground = scene.stack_ground.as_ref().expect("the ground around W9");
+    let rings: Vec<Vec<[f64; 2]>> = ground
+        .rings
+        .iter()
+        .map(|ring| ring.iter().map(|at| [at.longitude, at.latitude]).collect())
+        .collect();
+    assert!(map.export.buildings[w9]
+        .footprint
+        .iter()
+        .flatten()
+        .flatten()
+        .all(|point| geometry::polygon_contains(&rings, *point)));
     assert!(scene
         .stack
         .iter()

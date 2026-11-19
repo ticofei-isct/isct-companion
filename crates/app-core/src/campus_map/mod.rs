@@ -292,6 +292,8 @@ pub struct CampusMapStackFloor {
     pub base_m: f64,
     /// The floor picked in the level picker, drawn solid; the others faint.
     pub shown: bool,
+    /// The street floor, the main entrance's, at 0: it lies on the ground.
+    pub street: bool,
     /// False for a floor between two with plans that the export has no plan
     /// of: only the building's footprint marks where it is.
     pub has_plan: bool,
@@ -349,6 +351,10 @@ pub struct CampusMapScene {
     pub stacked: bool,
     /// The building's floors, lowest first, while `stacked`.
     pub stack: Vec<CampusMapStackFloor>,
+    /// The ground around the stacked building, at its street floor's height
+    /// (0): its footprint's box with some ground around it. Floors under the
+    /// street are drawn below it, seen through it.
+    pub stack_ground: Option<CampusMapPolygon>,
 }
 
 /// One search answer.

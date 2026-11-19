@@ -33,6 +33,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -63,6 +65,7 @@ import app.isctcompanion.core.CampusMapPoint
 import app.isctcompanion.core.CampusMapPolygon
 import app.isctcompanion.core.CampusMapScene
 import app.isctcompanion.core.CampusMapStackFloor
+import app.isctcompanion.core.CampusMapStackEntrance
 import app.isctcompanion.design.LocalReducedMotion
 import app.isctcompanion.design.Palette
 import app.isctcompanion.design.Theme
@@ -79,7 +82,6 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
-import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
@@ -103,13 +105,14 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * line widths in metres, MapLibre's own symbol collision) and reports the
  * part of the map the controls leave visible.
  *
- * In the stack, Core's floors become slabs raised to their height
- * (MapLibre's fill extrusion), seen at an angle: the floor picked solid,
- * the ones below it faint, the ones above it barely there so they never
- * hide it, and the selected room raised in the accent over all of them:
- * solid on the floor picked, half seen on any other.
- * The entrances keep the flat map's icons, drawn over the map where their
- * floor stands, so a building on a slope shows its doors upstairs. */
+ * The stack is drawn over the map, not in it, so it needs nothing of the
+ * map engine but its ground projection (as MapKit on iOS): each point at a
+ * height is projected through the ground point on the same line of sight
+ * ([Sight]). The floors are outlines, the floor picked with its plan; the
+ * street floor lies on a plate of ground, the floors under the street
+ * below it, seen through it, and the selected room is a block in the
+ * accent over everything. The entrances keep the flat map's icons, at
+ * their floor's height. */
 @Composable
 fun FloorMapView(
     scene: CampusMapScene?,
@@ -143,7 +146,7 @@ fun FloorMapView(
     var placed by remember { mutableStateOf(emptyList<PlacedMark>()) }
     var raised by remember { mutableStateOf(emptyList<RaisedEntrance>()) }
     var rooms by remember { mutableStateOf(emptyList<RaisedRoom>()) }
-    var sunk by remember { mutableStateOf(emptyList<SunkFloor>()) }
+    var stack by remember { mutableStateOf<StackPicture?>(null) }
     SideEffect {
         painter.insets = insets
         painter.onCamera = onCamera
@@ -152,7 +155,7 @@ fun FloorMapView(
         painter.onPlaced = { placed = it }
         painter.onRaised = { raised = it }
         painter.onRooms = { rooms = it }
-        painter.onSunk = { sunk = it }
+        painter.onStack = { stack = it }
     }
     MapLifecycle(view)
     DisposableEffect(view) {
@@ -166,62 +169,112 @@ fun FloorMapView(
             update = { painter.show(scene, palette, dark, chrome, canFrame, showsPosition, follows, animates) },
         )
         SpokenMarks(placed, onSelect)
-        SunkFloors(sunk)
+        StackDrawing(stack)
         RaisedRooms(rooms)
         RaisedEntrances(raised, onSelect)
     }
 }
 
-/** A floor under the street, in screen pixels, while a floor under the
- * street is picked: its outline, walkways and rooms, each an outer ring at
- * the floor's height. */
-private data class SunkFloor(
+/** One floor of the stack on screen: the outer ring of each of its shapes
+ * at the floor's height, in the map's pixels. Only the floor picked brings
+ * its plan; the others are their outline. */
+private data class FloorPicture(
+    val name: String,
     val outline: List<List<Offset>>,
     val walkways: List<List<Offset>>,
     val rooms: List<List<Offset>>,
     val shown: Boolean,
-    /** Above the floor picked: only its outline, as in the stack. */
-    val above: Boolean,
+    val street: Boolean,
+    /** False for a floor between two with plans: only where it is. */
+    val plan: Boolean,
+    /** Below the street floor, under the ground. */
+    val under: Boolean,
+    /** Below the floor picked. */
+    val below: Boolean,
+    /** Where its name goes: by its outline's right-most corner. */
+    val label: Offset?,
 )
 
-/** The floors under the street. MapLibre cannot raise a shape below the
- * ground, so these are laid over the map, under a veil that dims the
- * ground and the floors above it: the floors are seen through the ground.
- * Drawn only while a floor under the street is picked; the deepest first,
- * so the ones above lie over it. */
+/** The stack as drawn: the floors under the street, the ground around the
+ * building at the street floor, then the street floor and those above,
+ * each lowest first, so a higher floor lies over a lower one. */
+private data class StackPicture(
+    val under: List<FloorPicture>,
+    val ground: List<Offset>?,
+    val over: List<FloorPicture>,
+    /** A floor under the street is picked: the ground is seen through. */
+    val seeThrough: Boolean,
+    /** The building's sides: an upright from its lowest floor to its
+     * highest at each end of its outline as seen. */
+    val sides: List<Pair<Offset, Offset>>,
+)
+
+/** The stack, drawn over the map. Floors are flat outlines at their
+ * heights: the floor picked solid with its corridors and rooms, those
+ * below it faint, those above it fainter still, and a floor without a plan
+ * dashed. The ground is a plate at the street floor that hides what is
+ * under it, so the floors under the street read as under the ground; while
+ * one of them is picked the plate thins so they show through it. Each floor
+ * is named at its right, the street floor as the entrance's. */
 @Composable
-private fun SunkFloors(floors: List<SunkFloor>) {
-    if (floors.isEmpty()) return
+private fun StackDrawing(picture: StackPicture?) {
+    if (picture == null) return
     val colors = Theme.colors
-    Box(Modifier.fillMaxSize().background(colors.bg.copy(alpha = GROUND_VEIL)))
-    for (floor in floors) {
-        Drawing(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    alpha = when {
-                        floor.shown -> 0.95f
-                        floor.above -> 0.25f
-                        else -> 0.35f
-                    }
-                    compositingStrategy = CompositingStrategy.Offscreen
-                },
-        ) {
-            fun ring(points: List<Offset>) = Path().apply {
-                moveTo(points[0].x, points[0].y)
-                for (point in points.drop(1)) lineTo(point.x, point.y)
-                close()
+    val entrance = t("campusMap.entrance")
+    Drawing(Modifier.fillMaxSize()) {
+        fun ring(points: List<Offset>) = Path().apply {
+            moveTo(points[0].x, points[0].y)
+            for (point in points.drop(1)) lineTo(point.x, point.y)
+            close()
+        }
+        val hairline = 1.dp.toPx()
+        val dashed = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))
+        fun floor(floor: FloorPicture) {
+            val fill = when {
+                !floor.plan -> 0f
+                floor.shown -> 0.95f
+                floor.below -> 0.35f
+                else -> 0.15f
             }
-            val hairline = Stroke(width = 1.dp.toPx())
+            val edge = if (floor.shown) colors.ink else colors.muted
+            val effect = if (!floor.plan || (floor.under && !floor.shown)) dashed else null
             for (shape in floor.outline) {
-                drawPath(ring(shape), colors.surface)
-                drawPath(ring(shape), colors.line, style = hairline)
+                val path = ring(shape)
+                if (fill > 0f) drawPath(path, colors.surface.copy(alpha = fill))
+                drawPath(
+                    path,
+                    edge.copy(alpha = if (floor.shown) 1f else 0.7f),
+                    style = Stroke(width = if (floor.shown) 1.5f * hairline else hairline, pathEffect = effect),
+                )
             }
             for (shape in floor.walkways) drawPath(ring(shape), colors.accentSoft)
             for (shape in floor.rooms) {
-                drawPath(ring(shape), colors.surface2)
-                drawPath(ring(shape), colors.line, style = hairline)
+                val path = ring(shape)
+                drawPath(path, colors.surface2)
+                drawPath(path, colors.line, style = Stroke(width = hairline))
             }
+        }
+        for (side in picture.sides) {
+            drawLine(colors.muted.copy(alpha = 0.5f), side.first, side.second, strokeWidth = hairline)
+        }
+        picture.under.forEach(::floor)
+        picture.ground?.let { ground ->
+            val path = ring(ground)
+            drawPath(path, colors.bg.copy(alpha = if (picture.seeThrough) SEE_THROUGH_GROUND else GROUND))
+            drawPath(path, colors.muted, style = Stroke(width = 1.5f * hairline))
+        }
+        picture.over.forEach(::floor)
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12.dp.toPx() }
+        for (floor in picture.under + picture.over) {
+            val at = floor.label ?: continue
+            text.color = when {
+                floor.shown -> colors.accent
+                floor.plan -> colors.ink
+                else -> colors.muted
+            }.toArgb()
+            text.isFakeBoldText = floor.shown || floor.street
+            val name = if (floor.street) "${floor.name} · $entrance" else floor.name
+            drawContext.canvas.nativeCanvas.drawText(name, at.x + 6.dp.toPx(), at.y + 4.dp.toPx(), text)
         }
     }
 }
@@ -361,9 +414,10 @@ private const val SHOWN_ROOM_OPACITY = 0.9f
 /** The selected room on a floor other than the one picked, above or below
  * it: one value for both. */
 private const val OTHER_FLOOR_ROOM_OPACITY = 0.5f
-/** How much the ground and the floors above it fade while a floor under the
- * street is picked. */
-private const val GROUND_VEIL = 0.55f
+/** The ground plate at the street floor, and while a floor under it is
+ * picked. */
+private const val GROUND = 0.8f
+private const val SEE_THROUGH_GROUND = 0.35f
 
 /** A `MapView` is told each lifecycle step by its host; this one lives as
  * long as the map page's destination. */
@@ -437,7 +491,7 @@ private class FloorPainter(private val view: MapView) {
     /** The stack's entrances in view and where their floors put them. */
     var onRaised: (List<RaisedEntrance>) -> Unit = {}
     var onRooms: (List<RaisedRoom>) -> Unit = {}
-    var onSunk: (List<SunkFloor>) -> Unit = {}
+    var onStack: (StackPicture?) -> Unit = {}
 
     private val context = view.context
     private val density = context.resources.displayMetrics.density
@@ -468,8 +522,7 @@ private class FloorPainter(private val view: MapView) {
     /** Per role, the ids of Core's layers its source holds now. */
     private val drawn = HashMap<CampusMapLayerRole, List<String>>()
     private var drawnMarks: List<CampusMapMark>? = null
-    /** The stack as last drawn, and whether the camera is tilted for it. */
-    private var drawnStack: List<CampusMapStackFloor>? = null
+    /** Whether the camera is tilted for the stack. */
     private var tilted = false
 
     init {
@@ -487,7 +540,7 @@ private class FloorPainter(private val view: MapView) {
             cameraMoving = true
             if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) framingActive = false
         }
-        // The stack's entrances follow the camera as it moves.
+        // The stack follows the camera as it moves.
         map.addOnCameraMoveListener { raise() }
         map.addOnCameraIdleListener {
             cameraMoving = false
@@ -599,72 +652,81 @@ private class FloorPainter(private val view: MapView) {
         showPosition(map, style)
         drawLayers(style, scene?.layers.orEmpty())
         drawMarks(style, scene?.marks.orEmpty())
-        val stacked = scene?.stacked == true
-        drawStack(style, if (stacked) scene?.stack.orEmpty() else emptyList())
         raise()
     }
 
-    /** Where each stacked entrance shows: its point on the ground, lifted up
-     * the screen by its floor's height. A height seen at the camera's tilt
-     * covers its sine in ground metres, at the scale the screen has across
-     * that point's own row. Core gives entrances only to the floor picked,
-     * which no floor above hides. */
+    /** Draws the stack for the camera as it is now: the floors, the ground
+     * plate, the selected room and the entrances, each point through
+     * [Sight]. Core gives entrances only to the floor picked. */
     private fun raise() {
         val map = map ?: return
         val current = scene
-        if (current == null || !current.stacked) {
+        if (current == null || !current.stacked || view.width == 0 || view.height == 0) {
             onRaised(emptyList())
             onRooms(emptyList())
-            onSunk(emptyList())
+            onStack(null)
             return
         }
-        val projection = map.projection
-        val tilt = sin(Math.toRadians(map.cameraPosition.tilt))
-        fun lifted(point: CampusMapPoint, height: Double): PointF? {
-            val at = LatLng(point.latitude, point.longitude)
-            val ground = projection.toScreenLocation(at)
-            val metres = at.distanceTo(projection.fromScreenLocation(PointF(ground.x + SCALE_PX, ground.y)))
-            if (metres <= 0.0) return null
-            return PointF(ground.x, (ground.y - height * tilt * SCALE_PX / metres).toFloat())
-        }
-        val inset = insets()
-        val raised = current.stack.flatMap { floor ->
-            floor.entrances.mapNotNull { entrance ->
-                val at = lifted(entrance.point, floor.baseM + SLAB_M) ?: return@mapNotNull null
-                val inside = at.x >= inset.left && at.x <= view.width - inset.right &&
-                    at.y >= inset.top && at.y <= view.height - inset.bottom
-                if (!inside) return@mapNotNull null
-                RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, at.x.roundToInt(), at.y.roundToInt())
+        val sight = Sight(map, view.width, view.height)
+        fun rings(polygons: List<CampusMapPolygon>, height: Double): List<List<Offset>> =
+            polygons.mapNotNull { shape ->
+                val ring = shape.rings.firstOrNull()?.takeIf { it.size >= 3 } ?: return@mapNotNull null
+                ring.map { point -> sight.at(point, height) ?: return@mapNotNull null }
             }
-        }
-        onRaised(raised)
-        val rooms = current.stack.mapNotNull { floor ->
-            val rings = floor.highlight.mapNotNull { it.rings.firstOrNull()?.takeIf { ring -> ring.size >= 3 } }
-            if (rings.isEmpty()) return@mapNotNull null
-            fun at(height: Double): List<List<Offset>>? = rings.map { ring ->
-                ring.map { point -> lifted(point, height)?.let { Offset(it.x, it.y) } ?: return null }
-            }
-            val floors = at(floor.baseM + SLAB_M) ?: return@mapNotNull null
-            val tops = at(floor.baseM + HIGHLIGHT_M) ?: return@mapNotNull null
-            RaisedRoom(floors, tops, floor.shown)
-        }
-        onRooms(rooms)
         val shownBase = current.stack.firstOrNull { it.shown }?.baseM ?: 0.0
-        val sunk = if (shownBase >= 0.0) emptyList() else current.stack.filter { it.baseM < 0.0 }.mapNotNull { floor ->
-            val height = floor.baseM + SLAB_M
-            fun rings(polygons: List<CampusMapPolygon>): List<List<Offset>>? = polygons.mapNotNull { shape ->
-                shape.rings.firstOrNull()?.takeIf { it.size >= 3 }
-            }.map { ring -> ring.map { point -> lifted(point, height)?.let { Offset(it.x, it.y) } ?: return null } }
-            val above = floor.baseM > shownBase
-            SunkFloor(
-                outline = rings(floor.outline) ?: return@mapNotNull null,
-                walkways = if (above) emptyList() else rings(floor.walkways) ?: return@mapNotNull null,
-                rooms = if (above) emptyList() else rings(floor.rooms) ?: return@mapNotNull null,
+        val floors = current.stack.map { floor ->
+            val outline = rings(floor.outline, floor.baseM)
+            FloorPicture(
+                name = floor.name,
+                outline = outline,
+                walkways = if (floor.shown) rings(floor.walkways, floor.baseM) else emptyList(),
+                rooms = if (floor.shown) rings(floor.rooms, floor.baseM) else emptyList(),
                 shown = floor.shown,
-                above = above,
+                street = floor.street,
+                plan = floor.hasPlan,
+                under = floor.baseM < 0.0,
+                below = floor.baseM < shownBase,
+                label = outline.flatten().maxByOrNull { it.x },
             )
         }
-        onSunk(sunk)
+        // The building's sides, at the outline's ends as seen from here.
+        val corners = current.stack.flatMap { floor -> floor.outline.flatMap { it.rings.firstOrNull().orEmpty() } }
+        val lowest = current.stack.firstOrNull()?.baseM ?: 0.0
+        val highest = current.stack.lastOrNull()?.baseM ?: 0.0
+        val seen = corners.mapNotNull { point -> sight.at(point, 0.0)?.let { point to it } }
+        val sides = listOfNotNull(seen.minByOrNull { it.second.x }, seen.maxByOrNull { it.second.x }).mapNotNull { (point, _) ->
+            val foot = sight.at(point, lowest) ?: return@mapNotNull null
+            val head = sight.at(point, highest) ?: return@mapNotNull null
+            foot to head
+        }
+        val ground = current.stackGround?.rings?.firstOrNull()?.let { ring ->
+            ring.map { point -> sight.at(point, 0.0) ?: return@let null }
+        }
+        onStack(
+            StackPicture(
+                under = floors.filter { it.under },
+                ground = ground,
+                over = floors.filter { !it.under },
+                seeThrough = shownBase < 0.0,
+                sides = sides,
+            ),
+        )
+        val inset = insets()
+        fun entrance(floor: CampusMapStackFloor, entrance: CampusMapStackEntrance): RaisedEntrance? {
+            val at = sight.at(entrance.point, floor.baseM) ?: return null
+            val inside = at.x >= inset.left && at.x <= view.width - inset.right &&
+                at.y >= inset.top && at.y <= view.height - inset.bottom
+            if (!inside) return null
+            return RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, at.x.roundToInt(), at.y.roundToInt())
+        }
+        onRaised(current.stack.flatMap { floor -> floor.entrances.mapNotNull { entrance(floor, it) } })
+        val rooms = current.stack.mapNotNull { floor ->
+            val bottoms = rings(floor.highlight, floor.baseM)
+            val tops = rings(floor.highlight, floor.baseM + HIGHLIGHT_M)
+            if (bottoms.isEmpty() || bottoms.size != tops.size) return@mapNotNull null
+            RaisedRoom(bottoms, tops, floor.shown)
+        }
+        onRooms(rooms)
     }
 
     /** The stack is seen at an angle and may be turned and tilted; a single
@@ -861,28 +923,6 @@ private class FloorPainter(private val view: MapView) {
                     PropertyFactory.textAllowOverlap(true),
                 ),
         )
-        // The stack. Each layer has one opacity, so the floors are split by
-        // where they sit against the floor picked: below it faint, so they
-        // show through; above it nearly clear, so the floor picked is never
-        // behind them. The selected room is laid over the map (`RaisedRooms`).
-        style.addSource(GeoJsonSource(STACK))
-        val color = Expression.match(
-            Expression.get("part"),
-            Expression.color(palette.surface2.toArgb()),
-            Expression.stop("outline", Expression.color(palette.surface.toArgb())),
-            Expression.stop("walkway", Expression.color(palette.accentSoft.toArgb())),
-        )
-        fun slab(id: String, place: String, opacity: Float) = FillExtrusionLayer(id, STACK)
-            .withFilter(Expression.eq(Expression.get("place"), Expression.literal(place)))
-            .withProperties(
-                PropertyFactory.fillExtrusionColor(color),
-                PropertyFactory.fillExtrusionBase(Expression.get("base")),
-                PropertyFactory.fillExtrusionHeight(Expression.get("top")),
-                PropertyFactory.fillExtrusionOpacity(opacity),
-            )
-        style.addLayer(slab(STACK_BELOW, BELOW, 0.3f))
-        style.addLayer(slab(STACK_SHOWN, SHOWN, 0.95f))
-        style.addLayer(slab(STACK_ABOVE, ABOVE, 0.18f))
     }
 
     private fun source(role: CampusMapLayerRole) = "campus-${role.name.lowercase()}"
@@ -1024,55 +1064,6 @@ private class FloorPainter(private val view: MapView) {
         onPlaced(placed)
     }
 
-    // Stack
-
-    /** Each floor as slabs: its outline as the floor, its spaces a little
-     * above it (walls are left out: lines cannot be raised), the selected
-     * room taller. */
-    private fun drawStack(style: Style, floors: List<CampusMapStackFloor>) {
-        if (drawnStack == floors) return
-        drawnStack = floors
-        val shownBase = floors.firstOrNull { it.shown }?.baseM ?: 0.0
-        val features = mutableListOf<String>()
-        for (floor in floors) {
-            // A floor under the street is laid over the map (`SunkFloors`):
-            // MapLibre raises nothing below the ground.
-            if (floor.baseM < 0.0) continue
-            val place = when {
-                floor.shown -> SHOWN
-                floor.baseM < shownBase -> BELOW
-                else -> ABOVE
-            }
-            fun add(polygons: List<CampusMapPolygon>, part: String, top: Double, at: String = place) {
-                for (shape in polygons) {
-                    if ((shape.rings.firstOrNull()?.size ?: 0) < 3) continue
-                    features += slabFeature(shape.rings, floor.baseM, floor.baseM + top, part, at)
-                }
-            }
-            add(floor.outline, "outline", OUTLINE_M)
-            // Above the floor picked only the outline is drawn: its rooms
-            // would grid over the plan that matters.
-            if (place != ABOVE) {
-                add(floor.walkways, "walkway", SLAB_M)
-                add(floor.rooms, "room", SLAB_M)
-            }
-            // The selected room is drawn over the map (`RaisedRooms`).
-        }
-        style.getSourceAs<GeoJsonSource>(STACK)?.setGeoJson(collection(features))
-    }
-
-    private fun slabFeature(rings: List<List<CampusMapPoint>>, base: Double, top: Double, part: String, place: String) =
-        buildString {
-            append("""{"type":"Feature","properties":{"base":""").append(base)
-            append(""","top":""").append(top)
-            append(""","part":"$part","place":"$place"},"geometry":{"type":"Polygon","coordinates":[""")
-            rings.forEachIndexed { index, ring ->
-                if (index > 0) append(',')
-                path(ring)
-            }
-            append("]}}")
-        }
-
     /** An icon on a 28 dp disc with a hairline rim, as iOS draws them. */
     private fun round(drawable: Int, tint: Int, fill: Int, palette: Palette): Bitmap {
         val side = (ICON_DP * density).roundToInt()
@@ -1118,22 +1109,11 @@ private class FloorPainter(private val view: MapView) {
         const val AMENITIES = "campus-amenities"
         const val ENTRANCES = "campus-entrances"
         const val LIT_LABELS = "campus-labels-lit"
-        const val STACK = "campus-stack"
-        const val STACK_BELOW = "campus-stack-below"
-        const val STACK_SHOWN = "campus-stack-shown"
-        const val STACK_ABOVE = "campus-stack-above"
-        const val BELOW = "below"
-        const val SHOWN = "shown"
-        const val ABOVE = "above"
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
-        /** Slab heights in the stack, metres: the floor, its spaces, and the
-         * selected room, tall enough to read from any angle. */
-        const val OUTLINE_M = 0.3
-        const val SLAB_M = 0.6
+        /** The selected room's height in the stack, metres: a block tall
+         * enough to read from any angle. */
         const val HIGHLIGHT_M = 3.0
-        /** Pixels across a row that measure the screen's scale there. */
-        const val SCALE_PX = 50f
         const val ENTRANCE_IMAGE = "campus-entrance"
         const val ENTRANCE_SELECTED_IMAGE = "campus-entrance-selected"
         /** OpenFreeMap's quiet styles, and two fonts its glyph server has. */
@@ -1141,6 +1121,64 @@ private class FloorPainter(private val view: MapView) {
         const val DARK_STYLE = "https://tiles.openfreemap.org/styles/dark"
         const val FONT_REGULAR = "Noto Sans Regular"
         const val FONT_BOLD = "Noto Sans Bold"
+    }
+}
+
+/** Where a point at a height shows on screen, as MapLibre's camera sees it.
+ * MapLibre projects only the ground, so a point at height `h` above ground
+ * point `g` is projected through the ground point on the same line of
+ * sight: seen from altitude `A` over ground point `c`, that is
+ * `c + (g - c) · A / (A - h)`. Below the ground (`h` < 0) it falls short of
+ * `g`, towards the camera, as it should. MapLibre's camera stands 1.5 view
+ * heights from the centre of the view (its field of view, 2·atan(1/3)),
+ * tilted from straight down by the camera's tilt and facing its bearing;
+ * this view gives the map no padding, so the centre of the view is the
+ * camera's. iOS has the camera's altitude and position from MapKit. */
+private class Sight(map: MapLibreMap, width: Int, height: Int) {
+    private val projection = map.projection
+    private val target: LatLng
+    private val eastM: Double
+    private val altitude: Double
+    private val cameraX: Double
+    private val cameraY: Double
+
+    init {
+        val centre = PointF(width / 2f, height / 2f)
+        target = projection.fromScreenLocation(centre)
+        // Across the centre of the view a pixel spans the map's own scale.
+        val metresPerPixel = target.distanceTo(projection.fromScreenLocation(PointF(centre.x + SCALE_PX, centre.y))) / SCALE_PX
+        val distance = CAMERA_DISTANCE * height * metresPerPixel
+        val tilt = Math.toRadians(map.cameraPosition.tilt)
+        val bearing = Math.toRadians(map.cameraPosition.bearing)
+        altitude = distance * cos(tilt)
+        // Behind the centre of the view, against the way the camera faces.
+        val back = distance * sin(tilt)
+        cameraX = -back * sin(bearing)
+        cameraY = -back * cos(bearing)
+        eastM = cos(Math.toRadians(target.latitude)) * METRES_PER_DEGREE_LNG
+    }
+
+    /** `null` for a point at or above the camera, which no view shows. */
+    fun at(point: CampusMapPoint, height: Double): Offset? {
+        if (altitude <= 0.0 || height >= altitude * 0.9) return null
+        val x = (point.longitude - target.longitude) * eastM
+        val y = (point.latitude - target.latitude) * METRES_PER_DEGREE_LAT
+        val scale = altitude / (altitude - height)
+        val groundX = cameraX + (x - cameraX) * scale
+        val groundY = cameraY + (y - cameraY) * scale
+        val screen = projection.toScreenLocation(
+            LatLng(target.latitude + groundY / METRES_PER_DEGREE_LAT, target.longitude + groundX / eastM),
+        )
+        return Offset(screen.x, screen.y)
+    }
+
+    private companion object {
+        /** MapLibre's camera from the centre of the view, in view heights. */
+        const val CAMERA_DISTANCE = 1.5
+        /** Pixels across the centre that measure the map's scale. */
+        const val SCALE_PX = 100f
+        const val METRES_PER_DEGREE_LAT = 110_574.0
+        const val METRES_PER_DEGREE_LNG = 111_320.0
     }
 }
 

@@ -13,7 +13,7 @@ use super::{
     CampusMapCamera, CampusMapCandidate, CampusMapCard, CampusMapFraming, CampusMapIntent,
     CampusMapLayer, CampusMapLayerRole, CampusMapLevel, CampusMapLink, CampusMapMark,
     CampusMapMarkKind, CampusMapPlace, CampusMapPoint, CampusMapScene, CampusMapSearchResult,
-    CampusMapStackEntrance, CampusMapStackFloor,
+    CampusMapPolygon, CampusMapStackEntrance, CampusMapStackFloor,
 };
 use std::sync::Arc;
 
@@ -24,6 +24,8 @@ const HOME_CAMPUS: &str = "ookayama";
 /// Metres between floors in the stack: about twice as built, so the plan
 /// of each floor shows between the ones above and below it.
 const STACK_SPACING_M: f64 = 8.0;
+/// The ground drawn around a stacked building, metres beyond its footprint.
+const STACK_GROUND_MARGIN_M: f64 = 12.0;
 
 /// What a page reads from the settings when it opens.
 #[derive(Clone, Copy, Debug)]
@@ -410,6 +412,24 @@ impl Page {
         }
     }
 
+    /// The ground around the stacked building: its footprint's box, grown
+    /// by [`STACK_GROUND_MARGIN_M`].
+    fn stack_ground(&self) -> Option<CampusMapPolygon> {
+        let (building, _) = self.floor.filter(|_| self.stacked)?;
+        let footprint = &self.map.export.buildings[building].footprint;
+        let [west, south, east, north] = geometry::grown(
+            geometry::bounds(footprint.iter().flatten())?,
+            STACK_GROUND_MARGIN_M,
+        );
+        Some(polygon(&vec![vec![
+            [west, south],
+            [east, south],
+            [east, north],
+            [west, north],
+            [west, south],
+        ]]))
+    }
+
     /// Every floor of the stacked building, lowest first.
     fn stack_floors(&self) -> Vec<CampusMapStackFloor> {
         let Some((building, shown)) = self.floor.filter(|_| self.stacked) else {
@@ -428,6 +448,7 @@ impl Page {
                         name: level_name(ordinal),
                         base_m: self.base_m(building, ordinal),
                         shown: false,
+                        street: ordinal == map.street_ordinal(building),
                         has_plan: false,
                         outline: record.footprint.iter().map(polygon).collect(),
                         rooms: Vec::new(),
@@ -442,6 +463,7 @@ impl Page {
                     name: source.name.clone(),
                     base_m: self.base_m(building, ordinal),
                     shown: level == shown,
+                    street: ordinal == map.street_ordinal(building),
                     has_plan: true,
                     outline: source.outline.iter().map(polygon).collect(),
                     rooms: Vec::new(),
@@ -592,6 +614,7 @@ impl Page {
             attribution: map.export.attribution.clone(),
             stacked: self.stacked && floor.is_some(),
             stack: self.stack_floors(),
+            stack_ground: self.stack_ground(),
         }
     }
 
