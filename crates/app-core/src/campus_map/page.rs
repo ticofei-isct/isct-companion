@@ -339,21 +339,38 @@ impl Page {
     }
 
     /// The person moved the camera: the building and floor follow the
-    /// focus rule over what they now see.
+    /// focus rule over what they now see. In the stack the shell reports
+    /// the near half of the view (seen at an angle, the far half reaches
+    /// far off), and only another building coming into focus moves the
+    /// stack: to that building's street floor, or the kept room's floor in
+    /// its building, as a pick of it would. The stack never leaves for no
+    /// building, and the floor of the one it stays on is the person's.
     fn camera(&mut self, camera: &CampusMapCamera) {
-        // A stack stays on its building however the person turns it: seen
-        // at an angle, the camera's centre is no guide.
-        if self.stacked {
-            return;
-        }
         let corner = |at: &CampusMapPoint| [at.longitude, at.latitude];
-        if let Some(view) = Viewport::new([
+        let Some(view) = Viewport::new([
             corner(&camera.top_left),
             corner(&camera.top_right),
             corner(&camera.bottom_right),
             corner(&camera.bottom_left),
-        ]) {
+        ]) else {
+            return;
+        };
+        if !self.stacked {
             self.floor = self.map.focus(&view, self.floor);
+            return;
+        }
+        let Some((building, _)) = self.floor else {
+            return;
+        };
+        if let Some((next, _)) = self.map.focus(&view, self.floor) {
+            if next != building {
+                if let Some(level) = self
+                    .room_floor(next)
+                    .or_else(|| self.map.street_level(next))
+                {
+                    self.floor = Some((next, level));
+                }
+            }
         }
     }
 

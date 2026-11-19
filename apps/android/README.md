@@ -93,7 +93,10 @@ UniFFI checks signatures when the library loads.
   block in the accent over everything; the entrances keep the flat map's
   icons on the floor picked, and every floor with a way in is named so,
   in the stack and in the level picker. Picking a building goes to its
-  street floor. A room string that names a room on the plans (from a course
+  street floor. Panning the stack onto another building moves it there,
+  by the flat map's focus rule over the near half of the view (the far
+  half is foreshortened); turning or tilting does not. A room string that
+  names a room on the plans (from a course
   or 今日) opens the map as the stack straight away.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.
