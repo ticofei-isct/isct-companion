@@ -13,6 +13,8 @@ use crate::locale::ContentLanguage;
 
 /// 大岡山西9号館.
 const W9: &str = "a10026fc-4e59-55a7-9d89-0193f1749620";
+/// 大岡山西講義棟1, south of W9, entered on 3F.
+const WL1: &str = "95e63ef0-8ebc-5502-87ed-1f414753ce93";
 /// 屋内運動場, south-west of W9 and smaller.
 const SPORTS_CENTER: &str = "3a605ae0-88df-4574-aadf-56da13339a23";
 /// Inside W9's footprint, 6 m from the sports center's.
@@ -601,5 +603,30 @@ fn a_room_on_the_plans_opens_as_a_stack_about_its_street_floor() {
     );
     assert_eq!(page.floor, Some((w9, off_street)));
     select(&mut page, building(W9));
+    assert_eq!(page.floor, Some((w9, street)));
+    // Panning the stack onto another building brings it into focus, as on
+    // one floor: the stack moves to its street floor.
+    let wl1 = map.buildings[WL1];
+    let wl1_street = map.street_level(wl1).expect("WL1's street floor");
+    let center = map.export.buildings[wl1].center;
+    let moved = look(
+        &mut page,
+        &view_at(&map, WL1, center, FOCUS_ENTER_SHARE * 1.1),
+    );
+    assert!(moved.stacked);
+    assert_eq!(page.floor, Some((wl1, wl1_street)));
+    assert!(moved
+        .stack
+        .iter()
+        .any(|floor| floor.shown
+            && floor.level_id == map.export.buildings[wl1].levels[wl1_street].id));
+    // Zoomed out over no building it stays; back over W9, its street floor.
+    look(&mut page, &view(campus));
+    assert_eq!(page.floor.map(|(building, _)| building), Some(wl1));
+    let center = map.export.buildings[w9].center;
+    look(
+        &mut page,
+        &view_at(&map, W9, center, FOCUS_ENTER_SHARE * 1.1),
+    );
     assert_eq!(page.floor, Some((w9, street)));
 }

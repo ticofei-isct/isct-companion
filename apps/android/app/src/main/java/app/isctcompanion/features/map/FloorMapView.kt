@@ -524,6 +524,10 @@ private class FloorPainter(private val view: MapView) {
     private var chrome = MapInsets(0, 0, 0, 0)
     /** The camera's current move is the person's own gesture. */
     private var personMoving = false
+    /** Where on the ground the centre of the view was when the person's
+     * move began: in the stack, a turn or tilt that leaves it in place is no
+     * move to another building. */
+    private var movedFrom: LatLng? = null
     /** A first framing places the camera; later ones animate. */
     private var framed = false
     /** The theme the style was asked for, and the scene's content in the
@@ -547,11 +551,12 @@ private class FloorPainter(private val view: MapView) {
         map.uiSettings.isLogoEnabled = false
         map.addOnCameraMoveStartedListener { reason ->
             personMoving = reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE
+            if (personMoving) movedFrom = map.cameraPosition.target
         }
         // The stack follows the camera as it moves.
         map.addOnCameraMoveListener { raise() }
         map.addOnCameraIdleListener {
-            if (personMoving) report(map)
+            if (personMoving && (!tilted || panned(map))) report(map)
             personMoving = false
             place()
         }
@@ -783,15 +788,27 @@ private class FloorPainter(private val view: MapView) {
         if (animates) map.animateCamera(update, FRAMING_MS) else map.moveCamera(update)
     }
 
+    /** The person's move took the centre of the view somewhere else, rather
+     * than turning or tilting the map about it. */
+    private fun panned(map: MapLibreMap): Boolean {
+        val from = movedFrom ?: return true
+        val at = map.projection.toScreenLocation(from)
+        val dx = at.x - view.width / 2f
+        val dy = at.y - view.height / 2f
+        return dx * dx + dy * dy >= (PAN_DP * density) * (PAN_DP * density)
+    }
+
     /** The visible part's corners on the ground: a turned map gives a
-     * turned box. */
+     * turned box. In the stack, seen at an angle, only its near half: the
+     * far half reaches far off and would weigh far more than it shows. */
     private fun report(map: MapLibreMap) {
         if (view.width == 0 || view.height == 0) return
         val inset = insets()
         val left = inset.left.toFloat()
-        val top = inset.top.toFloat()
+        val bottom = (view.height - inset.bottom).toFloat().coerceAtLeast(inset.top + 1f)
+        val visibleTop = inset.top.toFloat()
+        val top = if (tilted) (visibleTop + bottom) / 2 else visibleTop
         val right = (view.width - inset.right).toFloat().coerceAtLeast(left + 1)
-        val bottom = (view.height - inset.bottom).toFloat().coerceAtLeast(top + 1)
         fun at(x: Float, y: Float): CampusMapPoint {
             val ground = map.projection.fromScreenLocation(PointF(x, y))
             return CampusMapPoint(latitude = ground.latitude, longitude = ground.longitude)
@@ -851,6 +868,9 @@ private class FloorPainter(private val view: MapView) {
         /** Room between the visible part's edges and what a framing shows. */
         const val FRAMING_MARGIN_DP = 16
         const val FRAMING_MS = 400
+        /** How far the centre of the view must move, in the stack, for the
+         * person's move to count as going somewhere. */
+        const val PAN_DP = 48
         /** How the stack is seen: degrees from straight down. */
         const val STACK_TILT = 55.0
         /** The selected room's height in the stack, metres: a block tall
