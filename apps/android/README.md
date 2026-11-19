@@ -82,16 +82,17 @@ UniFFI checks signatures when the library loads.
 - This fork adds a view iOS does not have yet: the building's floors as a
   stack seen at an angle (`Stack`), to show whether a room is above or below
   the way in. Core gives each floor a height (the export's street floor at
-  0) and its shapes, and the ground around the building. The shell draws the
+  0) and its shapes. The shell draws the
   stack over the map rather than in it, needing only the map's ground
   projection, so MapKit can draw it the same way: each point at a height is
   projected through the ground point on the same line of sight from
   MapLibre's camera (`Sight`). The floors are outlines, the floor picked
-  with its corridors and rooms and each floor named at its side; the ground
-  is a plate at the street floor over the floors under it, which thins
-  while one of them is picked; the selected room is a block in the accent
-  over everything; the entrances keep the flat map's icons, on the floor
-  picked only. A room string that names a room on the plans (from a course
+  with its corridors and rooms and each floor named at its side; the
+  building's footprint at the street floor is the ground over the floors
+  under it, and thins while one of them is picked; the selected room is a
+  block in the accent over everything; the entrances keep the flat map's
+  icons on every floor with a way in, fainter off the floor picked. Picking
+  a building goes to its street floor. A room string that names a room on the plans (from a course
   or 今日) opens the map as the stack straight away.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.

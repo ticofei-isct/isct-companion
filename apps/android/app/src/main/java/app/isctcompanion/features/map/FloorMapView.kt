@@ -31,6 +31,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.material3.Icon
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -102,10 +103,10 @@ data class MapInsets(val left: Int, val top: Int, val right: Int, val bottom: In
  * nothing of the map engine but its ground projection (as MapKit on iOS):
  * each point at a height is projected through the ground point on the same
  * line of sight ([Sight]). The floors are outlines, the floor picked with
- * its plan; the street floor lies on a plate of ground, the floors under
- * the street below it, seen through it, and the selected room is a block
- * in the accent over everything. The entrances keep the flat map's icons,
- * at their floor's height. */
+ * its plan; the building's footprint at the street floor is the ground,
+ * the floors under the street below it, seen through it, and the selected
+ * room is a block in the accent over everything. The entrances keep the
+ * flat map's icons, at their floor's height, on every floor with a way in. */
 @Composable
 fun FloorMapView(
     scene: CampusMapScene?,
@@ -201,12 +202,12 @@ private data class FloorPicture(
     val label: Offset?,
 )
 
-/** The stack as drawn: the floors under the street, the ground around the
- * building at the street floor, then the street floor and those above,
+/** The stack as drawn: the floors under the street, the ground (the
+ * building's footprint) at the street floor, then the street floor and those above,
  * each lowest first, so a higher floor lies over a lower one. */
 private data class StackPicture(
     val under: List<FloorPicture>,
-    val ground: List<Offset>?,
+    val ground: List<List<Offset>>,
     val over: List<FloorPicture>,
     /** A floor under the street is picked: the ground is seen through. */
     val seeThrough: Boolean,
@@ -267,8 +268,8 @@ private fun StackDrawing(picture: StackPicture?) {
             drawLine(colors.muted.copy(alpha = 0.5f), side.first, side.second, strokeWidth = hairline)
         }
         picture.under.filter { !it.shown }.forEach(::floor)
-        picture.ground?.let { ground ->
-            val path = ring(ground)
+        for (shape in picture.ground) {
+            val path = ring(shape)
             drawPath(path, colors.bg.copy(alpha = if (picture.seeThrough) SEE_THROUGH_GROUND else GROUND))
             drawPath(path, colors.muted, style = Stroke(width = 1.5f * hairline))
         }
@@ -333,13 +334,22 @@ private fun RaisedRooms(rooms: List<RaisedRoom>) {
     }
 }
 
-/** An entrance in the stack and where its floor puts it on screen. */
-private data class RaisedEntrance(val id: String, val name: String?, val selected: Boolean, val x: Int, val y: Int)
+/** An entrance in the stack and where its floor puts it on screen; `shown`
+ * when that floor is the one picked. */
+private data class RaisedEntrance(
+    val id: String,
+    val name: String?,
+    val selected: Boolean,
+    val shown: Boolean,
+    val x: Int,
+    val y: Int,
+)
 
 /** The stack's entrances, as the flat map draws them: MapLibre's icons lie
  * on the ground, so these are the same disc and icon laid over the map at
- * the height of the floor each is on. A tap picks the entrance as on the
- * flat map, and a screen reader reads its name. */
+ * the height of the floor each is on, every floor with a way in, the ones
+ * off the floor picked fainter. A tap picks the entrance as on the flat
+ * map, and a screen reader reads its name. */
 @Composable
 private fun RaisedEntrances(raised: List<RaisedEntrance>, onSelect: (CampusMapPlace) -> Unit) {
     val half = with(LocalDensity.current) { (SPOKEN_DP.dp / 2).roundToPx() }
@@ -351,6 +361,7 @@ private fun RaisedEntrances(raised: List<RaisedEntrance>, onSelect: (CampusMapPl
                 Modifier
                     .offset { IntOffset(entrance.x - half, entrance.y - half) }
                     .size(SPOKEN_DP.dp)
+                    .alpha(if (entrance.shown || entrance.selected) 1f else OTHER_FLOOR_ENTRANCE_OPACITY)
                     .clip(CircleShape)
                     .background(if (entrance.selected) colors.accent else colors.surface)
                     .border(1.dp, colors.line, CircleShape)
@@ -430,6 +441,8 @@ private const val SHOWN_ROOM_OPACITY = 0.9f
 /** The selected room on a floor other than the one picked, above or below
  * it: one value for both. */
 private const val OTHER_FLOOR_ROOM_OPACITY = 0.5f
+/** An entrance off the floor picked. */
+private const val OTHER_FLOOR_ENTRANCE_OPACITY = 0.6f
 /** The ground plate at the street floor, and while a floor under it is
  * picked. */
 private const val GROUND = 0.8f
@@ -635,7 +648,7 @@ private class FloorPainter(private val view: MapView) {
 
     /** Draws the stack for the camera as it is now: the floors, the ground
      * plate, the selected room and the entrances, each point through
-     * [Sight]. Core gives entrances only to the floor picked. */
+     * [Sight]. Core gives each floor its own entrances. */
     private fun raise() {
         val map = map ?: return
         val current = scene
@@ -677,9 +690,7 @@ private class FloorPainter(private val view: MapView) {
             val head = sight.at(point, highest) ?: return@mapNotNull null
             foot to head
         }
-        val ground = current.stackGround?.rings?.firstOrNull()?.let { ring ->
-            ring.map { point -> sight.at(point, 0.0) ?: return@let null }
-        }
+        val ground = rings(current.stackGround, 0.0)
         onStack(
             StackPicture(
                 under = floors.filter { it.under },
@@ -695,7 +706,7 @@ private class FloorPainter(private val view: MapView) {
             val inside = at.x >= inset.left && at.x <= view.width - inset.right &&
                 at.y >= inset.top && at.y <= view.height - inset.bottom
             if (!inside) return null
-            return RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, at.x.roundToInt(), at.y.roundToInt())
+            return RaisedEntrance(entrance.entranceId, entrance.name, entrance.selected, floor.shown, at.x.roundToInt(), at.y.roundToInt())
         }
         onRaised(current.stack.flatMap { floor -> floor.entrances.mapNotNull { entrance(floor, it) } })
         val rooms = current.stack.mapNotNull { floor ->

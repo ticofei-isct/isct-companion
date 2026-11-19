@@ -516,19 +516,34 @@ fn a_room_on_the_plans_opens_as_a_stack_about_its_street_floor() {
         },
     );
     assert_eq!(page.floor, Some(shown));
-    // The ground around the building holds its whole footprint.
-    let ground = scene.stack_ground.as_ref().expect("the ground around W9");
-    let rings: Vec<Vec<[f64; 2]>> = ground
-        .rings
-        .iter()
-        .map(|ring| ring.iter().map(|at| [at.longitude, at.latitude]).collect())
-        .collect();
-    assert!(record
-        .footprint
-        .iter()
-        .flatten()
-        .flatten()
-        .all(|point| geometry::polygon_contains(&rings, *point)));
+    // The ground at the street floor is the building's footprint.
+    assert_eq!(scene.stack_ground.len(), record.footprint.len());
+    // Every floor with a way in shows its own entrances, the floor picked
+    // or not: W9 is entered on more than one floor.
+    for floor in &scene.stack {
+        let mut expected: Vec<&str> = record
+            .entrances
+            .iter()
+            .filter(|entrance| entrance.level_id.as_deref() == Some(floor.level_id.as_str()))
+            .map(|entrance| entrance.id.as_str())
+            .collect();
+        let mut shown: Vec<&str> = floor
+            .entrances
+            .iter()
+            .map(|at| at.entrance_id.as_str())
+            .collect();
+        expected.sort_unstable();
+        shown.sort_unstable();
+        assert_eq!(shown, expected, "{}", floor.name);
+    }
+    assert!(
+        scene
+            .stack
+            .iter()
+            .filter(|floor| !floor.entrances.is_empty())
+            .count()
+            > 1
+    );
     // Turning the stack is no reason to leave the building.
     let campus = map.campus_bounds("ookayama").expect("ookayama");
     look(&mut page, &view(campus));
@@ -557,4 +572,21 @@ fn a_room_on_the_plans_opens_as_a_stack_about_its_street_floor() {
     let again = send(&mut page, CampusMapIntent::Stack { on: true });
     assert!(again.stacked);
     assert_eq!(page.floor, Some(shown));
+    // With no room kept, picking the building goes to its street floor,
+    // whichever floor was shown.
+    send(&mut page, CampusMapIntent::Clear);
+    let off_street = record
+        .levels
+        .iter()
+        .position(|level| level.id != record.levels[street].id)
+        .expect("W9 has several floors");
+    send(
+        &mut page,
+        CampusMapIntent::Level {
+            id: record.levels[off_street].id.clone(),
+        },
+    );
+    assert_eq!(page.floor, Some((w9, off_street)));
+    select(&mut page, building(W9));
+    assert_eq!(page.floor, Some((w9, street)));
 }

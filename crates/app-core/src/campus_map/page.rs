@@ -30,8 +30,6 @@ const HOME_CAMPUS: &str = "ookayama";
 /// Metres between floors in the stack: about twice as built, so the plan
 /// of each floor shows between the ones above and below it.
 const STACK_SPACING_M: f64 = 8.0;
-/// The ground drawn around a stacked building, metres beyond its footprint.
-const STACK_GROUND_MARGIN_M: f64 = 12.0;
 
 /// What a page reads from the settings when it opens.
 #[derive(Clone, Copy, Debug)]
@@ -237,13 +235,14 @@ impl Page {
     }
 
     /// Every explicit building pick frames its bounds once, including a tap
-    /// on the building already in focus.
+    /// on the building already in focus, on its street floor: the floor it
+    /// is entered on, whichever floor was shown before. Back at the kept
+    /// room's building, the room's floor.
     fn pick_building(&mut self, building: usize) {
         self.selection = Selection::Building(building);
-        // Back at the kept room's building, its floor.
         let floor = self
             .room_floor(building)
-            .or_else(|| self.map.arrival_level(self.floor, building))
+            .or_else(|| self.map.street_level(building))
             .map(|level| (building, level));
         self.frame(self.map.building_bounds(building), floor);
     }
@@ -571,22 +570,19 @@ impl Page {
         f64::from(ordinal - self.map.street_ordinal(building)) * STACK_SPACING_M
     }
 
-    /// The ground around the stacked building: its footprint's box, grown
-    /// by [`STACK_GROUND_MARGIN_M`].
-    fn stack_ground(&self) -> Option<CampusMapPolygon> {
-        let (building, _) = self.floor.filter(|_| self.stacked)?;
-        let footprint = &self.map.export.buildings[building].footprint;
-        let [west, south, east, north] = geometry::grown(
-            geometry::bounds(footprint.iter().flatten())?,
-            STACK_GROUND_MARGIN_M,
-        );
-        Some(polygon(&vec![vec![
-            [west, south],
-            [east, south],
-            [east, north],
-            [west, north],
-            [west, south],
-        ]]))
+    /// The ground the stacked building stands in: its footprint, at the
+    /// street floor.
+    fn stack_ground(&self) -> Vec<CampusMapPolygon> {
+        self.floor
+            .filter(|_| self.stacked)
+            .map(|(building, _)| {
+                self.map.export.buildings[building]
+                    .footprint
+                    .iter()
+                    .map(polygon)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Every floor of the stacked building, lowest first, the floors
@@ -629,15 +625,14 @@ impl Page {
                     rooms: Vec::new(),
                     walkways: Vec::new(),
                     highlight: Vec::new(),
-                    // Only the floor picked shows its entrances: the stack is
-                    // read one floor at a time.
+                    // Every floor with a way in shows it: on a slope a building
+                    // is entered on more than one floor.
                     entrances: record
                         .entrances
                         .iter()
                         .enumerate()
                         .filter(|(_, entrance)| {
-                            level == shown
-                                && entrance.level_id.as_deref() == Some(source.id.as_str())
+                            entrance.level_id.as_deref() == Some(source.id.as_str())
                         })
                         .map(|(index, entrance)| CampusMapStackEntrance {
                             entrance_id: entrance.id.clone(),

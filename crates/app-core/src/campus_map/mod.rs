@@ -374,10 +374,10 @@ pub struct CampusMapScene {
     pub stacked: bool,
     /// The building's floors, lowest first, while `stacked`.
     pub stack: Vec<CampusMapStackFloor>,
-    /// The ground around the stacked building, at its street floor's height
-    /// (0): its footprint's box with some ground around it. Floors under the
-    /// street are drawn below it, seen through it.
-    pub stack_ground: Option<CampusMapPolygon>,
+    /// The ground at the stacked building's street floor (0): its
+    /// footprint. Floors under the street are drawn below it, seen through
+    /// it.
+    pub stack_ground: Vec<CampusMapPolygon>,
 }
 
 /// One floor of the stack: shapes the shell raises to `base_m`.
@@ -405,9 +405,8 @@ pub struct CampusMapStackFloor {
     pub walkways: Vec<CampusMapPolygon>,
     /// The selected room.
     pub highlight: Vec<CampusMapPolygon>,
-    /// The building's entrances on this floor, while it is the floor picked
-    /// (empty on the others): a building on a slope is entered on more than
-    /// one floor, each shown with its own.
+    /// The building's entrances on this floor, on every floor that has
+    /// one: a building on a slope is entered on more than one floor.
     pub entrances: Vec<CampusMapStackEntrance>,
 }
 
