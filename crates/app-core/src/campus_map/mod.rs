@@ -77,6 +77,9 @@ pub struct CampusMapLevel {
     /// floors between two with plans (W9's 4F to 6F), which have none and
     /// cannot be picked.
     pub has_plan: bool,
+    /// The building has an entrance on this floor: the picker marks every
+    /// such floor, the street floor first among them.
+    pub entered: bool,
 }
 
 /// Where the camera settled after the person moved it: the part of the map
@@ -405,8 +408,10 @@ pub struct CampusMapStackFloor {
     pub walkways: Vec<CampusMapPolygon>,
     /// The selected room.
     pub highlight: Vec<CampusMapPolygon>,
-    /// The building's entrances on this floor, on every floor that has
-    /// one: a building on a slope is entered on more than one floor.
+    /// The building has an entrance on this floor: its name says so.
+    pub entered: bool,
+    /// The building's entrances on this floor, while it is the floor picked
+    /// (empty on the others).
     pub entrances: Vec<CampusMapStackEntrance>,
 }
 

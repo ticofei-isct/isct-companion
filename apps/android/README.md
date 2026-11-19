@@ -91,8 +91,9 @@ UniFFI checks signatures when the library loads.
   building's footprint at the street floor is the ground over the floors
   under it, and thins while one of them is picked; the selected room is a
   block in the accent over everything; the entrances keep the flat map's
-  icons on every floor with a way in, fainter off the floor picked. Picking
-  a building goes to its street floor. A room string that names a room on the plans (from a course
+  icons on the floor picked, and every floor with a way in is named so,
+  in the stack and in the level picker. Picking a building goes to its
+  street floor. A room string that names a room on the plans (from a course
   or 今日) opens the map as the stack straight away.
 - Logins stay on the device (Keystore); there is no iCloud Keychain to share
   them with the desktop app.

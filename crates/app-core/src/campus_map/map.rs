@@ -363,8 +363,19 @@ impl Map {
                 name: levels[index].name.clone(),
                 street: Some(index) == street,
                 has_plan: true,
+                entered: self.entered(building, index),
             })
             .collect()
+    }
+
+    /// The building has an entrance on this floor.
+    pub(super) fn entered(&self, building: usize, level: usize) -> bool {
+        let record = &self.export.buildings[building];
+        let id = record.levels[level].id.as_str();
+        record
+            .entrances
+            .iter()
+            .any(|entrance| entrance.level_id.as_deref() == Some(id))
     }
 
     /// Every ordinal from a building's lowest floor to its highest, lowest

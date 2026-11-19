@@ -529,6 +529,7 @@ impl Page {
                             name: level_name(ordinal),
                             street: ordinal == street,
                             has_plan: false,
+                            entered: false,
                         }),
                     })
                     .collect()
@@ -606,6 +607,7 @@ impl Page {
                         shown: false,
                         street: ordinal == street,
                         has_plan: false,
+                        entered: false,
                         outline: record.footprint.iter().map(polygon).collect(),
                         rooms: Vec::new(),
                         walkways: Vec::new(),
@@ -625,14 +627,16 @@ impl Page {
                     rooms: Vec::new(),
                     walkways: Vec::new(),
                     highlight: Vec::new(),
-                    // Every floor with a way in shows it: on a slope a building
-                    // is entered on more than one floor.
+                    entered: map.entered(building, level),
+                    // Only the floor picked shows its entrances on the map; the
+                    // picker and the floors' names say which others have one.
                     entrances: record
                         .entrances
                         .iter()
                         .enumerate()
                         .filter(|(_, entrance)| {
-                            entrance.level_id.as_deref() == Some(source.id.as_str())
+                            level == shown
+                                && entrance.level_id.as_deref() == Some(source.id.as_str())
                         })
                         .map(|(index, entrance)| CampusMapStackEntrance {
                             entrance_id: entrance.id.clone(),

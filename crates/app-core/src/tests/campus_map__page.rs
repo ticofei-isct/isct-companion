@@ -518,8 +518,9 @@ fn a_room_on_the_plans_opens_as_a_stack_about_its_street_floor() {
     assert_eq!(page.floor, Some(shown));
     // The ground at the street floor is the building's footprint.
     assert_eq!(scene.stack_ground.len(), record.footprint.len());
-    // Every floor with a way in shows its own entrances, the floor picked
-    // or not: W9 is entered on more than one floor.
+    // The map shows the entrances of the floor picked alone; every floor
+    // with a way in is marked as entered, in the stack and in the picker.
+    // W9 is entered on more than one floor.
     for floor in &scene.stack {
         let mut expected: Vec<&str> = record
             .entrances
@@ -527,22 +528,34 @@ fn a_room_on_the_plans_opens_as_a_stack_about_its_street_floor() {
             .filter(|entrance| entrance.level_id.as_deref() == Some(floor.level_id.as_str()))
             .map(|entrance| entrance.id.as_str())
             .collect();
-        let mut shown: Vec<&str> = floor
+        assert_eq!(floor.entered, !expected.is_empty(), "{}", floor.name);
+        if !floor.shown {
+            expected.clear();
+        }
+        let mut drawn: Vec<&str> = floor
             .entrances
             .iter()
             .map(|at| at.entrance_id.as_str())
             .collect();
         expected.sort_unstable();
-        shown.sort_unstable();
-        assert_eq!(shown, expected, "{}", floor.name);
+        drawn.sort_unstable();
+        assert_eq!(drawn, expected, "{}", floor.name);
     }
-    assert!(
+    assert!(scene.stack.iter().filter(|floor| floor.entered).count() > 1);
+    assert_eq!(
+        scene
+            .levels
+            .iter()
+            .filter(|level| level.entered)
+            .map(|level| &level.id)
+            .collect::<Vec<_>>(),
         scene
             .stack
             .iter()
-            .filter(|floor| !floor.entrances.is_empty())
-            .count()
-            > 1
+            .rev()
+            .filter(|floor| floor.entered)
+            .map(|floor| &floor.level_id)
+            .collect::<Vec<_>>()
     );
     // Turning the stack is no reason to leave the building.
     let campus = map.campus_bounds("ookayama").expect("ookayama");
