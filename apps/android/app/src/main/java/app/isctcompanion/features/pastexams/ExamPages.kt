@@ -2,11 +2,6 @@ package app.isctcompanion.features.pastexams
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Color
-import android.graphics.pdf.PdfRenderer
-import android.net.Uri
-import android.os.ParcelFileDescriptor
-import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -45,16 +39,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -66,11 +59,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import androidx.pdf.ExperimentalPdfApi
-import androidx.pdf.PdfDocument
-import androidx.pdf.SandboxedPdfLoader
-import androidx.pdf.compose.PdfViewer
-import androidx.pdf.compose.rememberPdfViewerState
 import app.isctcompanion.LocalModel
 import app.isctcompanion.LocalNavigator
 import app.isctcompanion.core.ExamAccountStatus
@@ -84,16 +72,14 @@ import app.isctcompanion.core.ExamUploadForm
 import app.isctcompanion.core.ExamUploadStart
 import app.isctcompanion.core.copyToDownloads
 import app.isctcompanion.design.Card
+import app.isctcompanion.design.PdfReader
 import app.isctcompanion.design.TabPage
 import app.isctcompanion.design.Theme
 import app.isctcompanion.design.t
 import java.io.File
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 
 /** How a subject page was reached: from a course (Core finds its subject and
  * class) or by a subject code. */
@@ -389,7 +375,7 @@ fun ExamDocumentScreen(id: String) {
 @Composable
 private fun DocumentView(file: ExamLocalDocument) {
     when (file.document.fileType) {
-        "application/pdf" -> PdfView(file.path)
+        "application/pdf" -> PdfReader(file.path)
         "text/plain" -> {
             val text by produceState<String?>(null, file.path) {
                 value = withContext(Dispatchers.IO) {
@@ -403,92 +389,6 @@ private fun DocumentView(file: ExamLocalDocument) {
             )
         }
         else -> ImageView(file.path)
-    }
-}
-
-/** androidx.pdf renders in its own sandboxed process, page by page as they
- * scroll in, with selection and zoom. It is a beta: when it cannot open the
- * file, the platform's PdfRenderer shows it a page at a time. */
-@OptIn(ExperimentalPdfApi::class)
-@Composable
-private fun PdfView(path: String) {
-    val context = LocalContext.current
-    val document by produceState<Result<PdfDocument>?>(null, path) {
-        value = openSandboxed(context, path)
-    }
-    // Close the document this effect saw: `document` read inside onDispose
-    // would be the newly loaded one, closed the moment it arrived.
-    val opened = document
-    DisposableEffect(opened) { onDispose { opened?.getOrNull()?.close() } }
-    when (val loaded = opened) {
-        null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-        else -> loaded.getOrNull()?.let {
-            PdfViewer(it, rememberPdfViewerState(), Modifier.fillMaxSize().background(Theme.colors.surface2))
-        } ?: RendererPdfView(path)
-    }
-}
-
-/** Set once the sandboxed reader failed in this process; later PDFs go
- * straight to PdfRenderer instead of waiting again. */
-@Volatile
-private var sandboxUnavailable = false
-
-/** Opens `path` in androidx.pdf's sandboxed service. When that service's
- * process cannot start (it crashed in IsctApplication once), binding waits
- * without an error and the reader would spin forever, so it gets a time
- * limit. A failure is logged and leaves the PDF to PdfRenderer. */
-private suspend fun openSandboxed(context: android.content.Context, path: String): Result<PdfDocument> {
-    if (sandboxUnavailable) return Result.failure(IllegalStateException("PDF sandbox unavailable"))
-    return try {
-        Result.success(withTimeout(8_000) { SandboxedPdfLoader(context).openDocument(Uri.fromFile(File(path))) })
-    } catch (timeout: TimeoutCancellationException) {
-        sandboxUnavailable = true
-        Log.w("PastExams", "Sandboxed PDF reader did not open in time; using PdfRenderer", timeout)
-        Result.failure(timeout)
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: Exception) {
-        sandboxUnavailable = true
-        Log.w("PastExams", "Sandboxed PDF reader failed; using PdfRenderer", failure)
-        Result.failure(failure)
-    }
-}
-
-/** The fallback reader: one page rendered by PdfRenderer, with page steps. */
-@Composable
-private fun RendererPdfView(path: String) {
-    var page by rememberSaveable(path) { mutableStateOf(0) }
-    val result by produceState<Result<Pair<Bitmap, Int>>?>(null, path, page) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
-                    PdfRenderer(descriptor).use { pdf ->
-                        pdf.openPage(page).use { source ->
-                            val scale = (1400f / maxOf(source.width, source.height)).coerceAtMost(2f)
-                            val bitmap = Bitmap.createBitmap((source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-                            bitmap.eraseColor(Color.WHITE)
-                            source.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            bitmap to pdf.pageCount
-                        }
-                    }
-                }
-            }
-        }
-    }
-    val preview = result
-    val shown = preview?.getOrNull()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Theme.gutter)) {
-        if (shown == null) {
-            Text(t(if (preview == null) "common.loading" else "error.unavailable"), color = Theme.colors.muted)
-        } else {
-            val (bitmap, pages) = shown
-            if (pages > 1) Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(enabled = page > 0, onClick = { page-- }) { Text(t("common.previousPage")) }
-                Text("${page + 1} / $pages")
-                TextButton(enabled = page + 1 < pages, onClick = { page++ }) { Text(t("common.nextPage")) }
-            }
-            Image(bitmap.asImageBitmap(), null, Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height))
-        }
     }
 }
 
