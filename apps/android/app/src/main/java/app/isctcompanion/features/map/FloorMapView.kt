@@ -211,11 +211,11 @@ private data class StackPicture(
 
 /** The stack, drawn over the map. Floors are flat outlines at their
  * heights: the floor picked solid with its corridors and rooms, those
- * below it faint, those above it fainter still, and a floor without a plan
- * dashed. The ground is a plate at the street floor that hides what is
- * under it, so the floors under the street read as under the ground; while
- * one of them is picked the plate thins so they show through it. Each floor
- * is named at its right, the street floor as the entrance's. */
+ * below it faint, those above it bare outlines, and a floor without a plan
+ * or under the street dashed. The ground is a plate at the street floor
+ * over the floors under it, so they read as under the ground; while one of
+ * them is picked the plate thins and that floor's plan is laid over it.
+ * Each floor is named at its right, the street floor as the entrance's. */
 @Composable
 private fun StackDrawing(picture: StackPicture?) {
     if (picture == null) return
@@ -230,11 +230,14 @@ private fun StackDrawing(picture: StackPicture?) {
         val hairline = 1.dp.toPx()
         val dashed = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))
         fun floor(floor: FloorPicture) {
+            // Floors above the one picked are outlines alone: a fill would
+            // veil the plan under them.
             val fill = when {
                 !floor.plan -> 0f
+                floor.shown && floor.under -> 0.85f
                 floor.shown -> 0.95f
                 floor.below -> 0.35f
-                else -> 0.15f
+                else -> 0f
             }
             val edge = if (floor.shown) colors.ink else colors.muted
             val effect = if (!floor.plan || (floor.under && !floor.shown)) dashed else null
@@ -257,12 +260,15 @@ private fun StackDrawing(picture: StackPicture?) {
         for (side in picture.sides) {
             drawLine(colors.muted.copy(alpha = 0.5f), side.first, side.second, strokeWidth = hairline)
         }
-        picture.under.forEach(::floor)
+        picture.under.filter { !it.shown }.forEach(::floor)
         picture.ground?.let { ground ->
             val path = ring(ground)
             drawPath(path, colors.bg.copy(alpha = if (picture.seeThrough) SEE_THROUGH_GROUND else GROUND))
             drawPath(path, colors.muted, style = Stroke(width = 1.5f * hairline))
         }
+        // The floor picked under the street is read through the ground: its
+        // plan over the plate, lower down than the plate's own edge.
+        picture.under.filter { it.shown }.forEach(::floor)
         picture.over.forEach(::floor)
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12.dp.toPx() }
         for (floor in picture.under + picture.over) {
