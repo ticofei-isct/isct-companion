@@ -5,22 +5,20 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import android.util.Size
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -28,94 +26,135 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.pdf.ExperimentalPdfApi
 import androidx.pdf.PdfDocument
 import androidx.pdf.SandboxedPdfLoader
+import androidx.pdf.compose.FastScrollConfiguration
 import androidx.pdf.compose.PdfViewer
 import androidx.pdf.compose.rememberPdfViewerState
 import app.isctcompanion.LocalNavigator
+import app.isctcompanion.R
+import app.isctcompanion.core.openLocalFile
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withTimeout
 
 // Every PDF the app shows goes through androidx.pdf: the reader (past exams,
 // LMS files) and the first-page thumbnail (hand-in). It renders in its own
 // sandboxed process, so a malformed file cannot take the app down.
 
+/** How long the sandboxed service may take to open a file. When its process
+ * cannot start, binding waits without an error, so without a limit the
+ * reader would spin forever. */
 private const val OPEN_TIMEOUT_MS = 8_000L
 
-/** Opens `file` in androidx.pdf's sandboxed service. When that service's
- * process cannot start, binding waits without an error, so it gets a time
- * limit and fails like any other unreadable file. The caller closes it. */
+/** Opens `file` in androidx.pdf's sandboxed service; the caller closes it. A
+ * timeout is a failure to open, not a cancellation of the caller. */
 suspend fun openPdf(context: Context, file: File): PdfDocument = try {
     withTimeout(OPEN_TIMEOUT_MS) { SandboxedPdfLoader(context).openDocument(Uri.fromFile(file)) }
 } catch (timeout: TimeoutCancellationException) {
-    // A timeout of our own is a failure to open, not a cancellation of the caller.
     throw IllegalStateException("The PDF service did not open ${file.name} in time", timeout)
 }
 
 /** The first page, `width` pixels wide, or null when it cannot be read. */
-suspend fun pdfFirstPage(context: Context, file: File, width: Int): Bitmap? = runCatching {
+suspend fun pdfFirstPage(context: Context, file: File, width: Int): Bitmap? = try {
     openPdf(context, file).use { document ->
         val page = document.getPageInfo(0)
         val height = (width.toLong() * page.height / page.width.coerceAtLeast(1)).toInt().coerceAtLeast(1)
         document.getPageBitmapSource(0).use { source -> source.getBitmap(Size(width, height)) }
     }
-}.onFailure { if (it is CancellationException) throw it }.getOrNull()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (error: Exception) {
+    Log.w("PdfReader", "Could not render a PDF thumbnail", error)
+    null
+}
 
 /** A PDF to read: pages scroll in as they come, with zoom, selection and
- * search. A file it cannot open says so, with a retry. */
+ * search. `failure` is shown when the file cannot be opened. */
 @OptIn(ExperimentalPdfApi::class)
 @Composable
-fun PdfReader(path: String, modifier: Modifier = Modifier) {
+fun PdfReader(file: File, failure: @Composable () -> Unit) {
     val context = LocalContext.current
-    var attempt by remember(path) { mutableIntStateOf(0) }
-    val document by produceState<Result<PdfDocument>?>(null, path, attempt) {
-        value = null
-        value = runCatching { openPdf(context, File(path)) }
-            .onFailure {
-                if (it is CancellationException) throw it
-                Log.w("PdfReader", "androidx.pdf could not open the file", it)
+    val result by produceState<Result<PdfDocument>?>(null, file) {
+        // The attempt owns the document, including when cancellation races with loading.
+        var opened: PdfDocument? = null
+        try {
+            value = try {
+                Result.success(openPdf(context, file).also { opened = it })
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w("PdfReader", "Could not open PDF", error)
+                Result.failure(error)
             }
-    }
-    // Close the document this effect saw: `document` read inside onDispose
-    // would be the newly loaded one, closed the moment it arrived.
-    val opened = document
-    DisposableEffect(opened) { onDispose { opened?.getOrNull()?.close() } }
-    val loaded = opened?.getOrNull()
-    when {
-        opened == null -> Box(modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-        loaded == null -> Column(
-            modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(t("error.unavailable"), color = Theme.colors.muted)
-            TextButton(onClick = { attempt++ }) { Text(t("common.retry")) }
+            if (value?.isSuccess == true) awaitCancellation()
+        } finally {
+            opened?.close()
         }
-        else -> PdfViewer(loaded, rememberPdfViewerState(), modifier.fillMaxSize().background(Theme.colors.surface2))
+    }
+    val loaded = result?.getOrNull()
+    when {
+        result == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+        loaded == null -> failure()
+        else -> PdfViewer(
+            loaded,
+            rememberPdfViewerState(),
+            Modifier.fillMaxSize().background(Theme.colors.surface2),
+            fastScrollConfig = remember(context) { fastScrollConfig(context) },
+        )
     }
 }
 
-/** A downloaded PDF pushed full screen, with its file still offered to
- * another app from the bar. */
+/** androidx.pdf pins its page scroller on screen whenever any accessibility
+ * service is on, and many phones keep one running (vendor gesture or
+ * security services), so the "page 3/10" label never goes away. A screen
+ * reader needs it; any other service only hides the page under it. In that
+ * case the scroller is given drawables with no size, which androidx.pdf does
+ * not draw or hit-test, so it is gone, not merely transparent. With no
+ * service on, it still shows while scrolling and fades. */
+private fun fastScrollConfig(context: Context): FastScrollConfiguration {
+    val accessibility = context.getSystemService(AccessibilityManager::class.java)
+    val pinnedWithoutReader = accessibility != null && accessibility.isEnabled && !accessibility.isTouchExplorationEnabled
+    return if (pinnedWithoutReader) {
+        FastScrollConfiguration.withDrawableIdsAndDp(R.drawable.pdf_fast_scroll_hidden, R.drawable.pdf_fast_scroll_hidden)
+    } else {
+        FastScrollConfiguration.withDrawableAndDimensionIds()
+    }
+}
+
+/** A downloaded PDF pushed full screen, its file still offered to another
+ * app from the bar. */
 @Composable
 fun PdfScreen(path: String, title: String) {
     val navigator = LocalNavigator.current
     val context = LocalContext.current
+    val file = File(path)
+    var attempt by remember(path) { mutableIntStateOf(0) }
     TabPage(
-        title.ifEmpty { File(path).name },
+        title.ifEmpty { file.name },
         navigationIcon = {
             IconButton(onClick = { navigator.back() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, t("common.back")) }
         },
         actions = {
-            IconButton(onClick = { viewInAnotherApp(context, File(path)) }) {
+            IconButton(onClick = { openLocalFile(context, file) }) {
                 Icon(Icons.AutoMirrored.Rounded.OpenInNew, t("common.openInAnotherApp"))
             }
         },
+        compact = true,
     ) {
-        PdfReader(path)
+        key(attempt) {
+            PdfReader(file) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    EmptyState(
+                        Icons.Rounded.Description,
+                        t("error.unavailable"),
+                        action = t("common.retry") to { attempt++ },
+                    )
+                }
+            }
+        }
     }
 }
