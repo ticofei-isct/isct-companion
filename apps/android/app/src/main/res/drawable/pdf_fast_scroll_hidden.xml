@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- No size on purpose: androidx.pdf skips drawing the fast scroller (thumb and
-     page indicator) when a drawable has no intrinsic size. See PdfReader.kt. -->
+<!-- A transparent stand-in for androidx.pdf's fast-scroll thumb and page
+     label background, used when the scroller would be pinned. See PdfReader.kt. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <solid android:color="@android:color/transparent" />
 </shape>

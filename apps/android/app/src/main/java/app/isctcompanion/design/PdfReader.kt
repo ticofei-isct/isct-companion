@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.pdf.ExperimentalPdfApi
 import androidx.pdf.PdfDocument
 import androidx.pdf.SandboxedPdfLoader
@@ -112,18 +113,28 @@ fun PdfReader(file: File, failure: @Composable () -> Unit) {
  * service is on, and many phones keep one running (vendor gesture or
  * security services), so the "page 3/10" label never goes away. A screen
  * reader needs it; any other service only hides the page under it. In that
- * case the scroller is given drawables with no size, which androidx.pdf does
- * not draw or hit-test, so it is gone, not merely transparent. With no
- * service on, it still shows while scrolling and fades. */
+ * case the thumb and the label's background are transparent and the label,
+ * whose text cannot be styled away, is drawn far past the view's left edge.
+ * The scroller's sizes come from its default drawables (they are read once,
+ * before ours arrive), so the margin is what moves the label. The thumb
+ * keeps no margin: a margin there would widen its touch area across the
+ * page. With no service on, it still shows while scrolling and fades. */
 private fun fastScrollConfig(context: Context): FastScrollConfiguration {
     val accessibility = context.getSystemService(AccessibilityManager::class.java)
     val pinnedWithoutReader = accessibility != null && accessibility.isEnabled && !accessibility.isTouchExplorationEnabled
     return if (pinnedWithoutReader) {
-        FastScrollConfiguration.withDrawableIdsAndDp(R.drawable.pdf_fast_scroll_hidden, R.drawable.pdf_fast_scroll_hidden)
+        FastScrollConfiguration.withDrawableIdsAndDp(
+            R.drawable.pdf_fast_scroll_hidden,
+            R.drawable.pdf_fast_scroll_hidden,
+            fastScrollPageIndicatorMarginEnd = OFF_SCREEN,
+        )
     } else {
         FastScrollConfiguration.withDrawableAndDimensionIds()
     }
 }
+
+/** Wider than any screen, so a label this far left of the edge is never seen. */
+private val OFF_SCREEN = 10_000.dp
 
 /** A downloaded PDF pushed full screen, its file still offered to another
  * app from the bar. */
