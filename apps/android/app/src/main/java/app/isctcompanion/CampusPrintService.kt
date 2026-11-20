@@ -39,10 +39,14 @@ class CampusPrintService : PrintService() {
     private val cancelled = mutableSetOf<PrintJobId>()
     private val model get() = (application as IsctApplication).model
 
-    override fun onCreatePrinterDiscoverySession(): PrinterDiscoverySession = Discovery()
+    override fun onCreatePrinterDiscoverySession(): PrinterDiscoverySession {
+        Log.i(TAG, "discovery session created")
+        return Discovery()
+    }
 
     override fun onConnected() {
         super.onConnected()
+        Log.i(TAG, "connected; ${activePrintJobs.size} active jobs")
         activePrintJobs.forEach(::onPrintJobQueued)
     }
 
@@ -169,17 +173,32 @@ class CampusPrintService : PrintService() {
     /** The system asks for printers when a print dialog opens, and for one
      * printer's capabilities when it is selected; both get the same answer. */
     private inner class Discovery : PrinterDiscoverySession() {
-        override fun onStartPrinterDiscovery(priorityList: List<PrinterId>) = addPrinters(listOf(printer()))
-        override fun onStopPrinterDiscovery() {}
-        override fun onValidatePrinters(printerIds: List<PrinterId>) = addPrinters(listOf(printer()))
-        override fun onStartPrinterStateTracking(printerId: PrinterId) = addPrinters(listOf(printer()))
-        override fun onStopPrinterStateTracking(printerId: PrinterId) {}
-        override fun onDestroy() {}
+        override fun onStartPrinterDiscovery(priorityList: List<PrinterId>) = report("start discovery")
+        override fun onStopPrinterDiscovery() { Log.i(TAG, "stop discovery") }
+        override fun onValidatePrinters(printerIds: List<PrinterId>) = report("validate")
+        override fun onStartPrinterStateTracking(printerId: PrinterId) = report("start tracking")
+        override fun onStopPrinterStateTracking(printerId: PrinterId) { Log.i(TAG, "stop tracking") }
+        override fun onDestroy() { Log.i(TAG, "discovery session destroyed") }
+
+        /** Lists the printer, logging each step, so a printer missing from
+         * the print dialog shows in the log whether the system asked. */
+        private fun report(step: String) {
+            Log.i(TAG, "$step: listing the printer")
+            val info = try {
+                printer()
+            } catch (error: Throwable) {
+                Log.e(TAG, "$step: could not describe the printer", error)
+                return
+            }
+            addPrinters(listOf(info))
+            Log.i(TAG, "$step: listed ${info.id.localId} status=${info.status} capabilities=${info.capabilities != null}")
+        }
     }
 
     private companion object {
         /** The printer's local id; the system remembers the last printer by it. */
         const val PRINTER = "kyocera"
+        const val TAG = "isct-print"
         val CAPABILITIES = campusPrinterCapabilities()
     }
 }
