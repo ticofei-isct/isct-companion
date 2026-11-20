@@ -50,8 +50,10 @@ import app.isctcompanion.core.ExamLocalDocument
 import app.isctcompanion.core.copyToDownloads
 import app.isctcompanion.core.openLocalFile
 import app.isctcompanion.design.EmptyState
+import app.isctcompanion.design.MarkdownView
 import app.isctcompanion.design.TabPage
 import app.isctcompanion.design.Theme
+import app.isctcompanion.design.isMarkdownName
 import app.isctcompanion.design.t
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -197,12 +199,17 @@ private fun ExamDocumentPreview(file: ExamLocalDocument) {
         when (file.document.fileType) {
             "application/pdf" -> PdfReader(source, failure)
             "text/plain" -> PreviewContent(readPreviewFile(source) { it.readText() }, failure) { text ->
-                SelectionContainer {
-                    Text(
-                        text,
-                        color = Theme.colors.ink,
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Theme.gutter),
-                    )
+                // The site stores Markdown as text/plain; the uploaded name tells it apart.
+                if (isMarkdownName(file.document.fileName)) {
+                    MarkdownView(text, Modifier.fillMaxSize())
+                } else {
+                    SelectionContainer {
+                        Text(
+                            text,
+                            color = Theme.colors.ink,
+                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Theme.gutter),
+                        )
+                    }
                 }
             }
             else -> PreviewContent(readPreviewFile(source, ::decodeDocumentImage), failure) { DocumentImage(it) }

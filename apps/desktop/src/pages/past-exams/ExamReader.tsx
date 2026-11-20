@@ -22,6 +22,12 @@ import type {
 import { t } from "../../i18n";
 import { ReportDialog } from "./ExamDialogs";
 
+const ExamMarkdown = lazy(() =>
+  import("./ExamMarkdown").then((m) => ({ default: m.ExamMarkdown })),
+);
+/** The site stores Markdown as text/plain; the uploaded name tells it apart. */
+const isMarkdown = (fileName: string) => /\.(md|markdown)$/i.test(fileName);
+
 const Pdf = lazy(() =>
   import("../../features/lms/PdfDocument").then((m) => ({
     default: m.PdfDocument,
@@ -168,7 +174,11 @@ export function ExamReader({
           />
         </Suspense>
       ) : document.fileType === "text/plain" ? (
-        <PlainTextPreview key={file.path} path={file.path} />
+        <PlainTextPreview
+          key={file.path}
+          path={file.path}
+          markdown={isMarkdown(document.fileName) || isMarkdown(file.path)}
+        />
       ) : (
         <ImageView src={localFileUrl(file.path)} title={title} />
       )}
@@ -191,7 +201,15 @@ export function ExamReader({
   );
 }
 
-function PlainTextPreview({ path }: { path: string }) {
+/** A text document read whole; Markdown is shown formatted and read-only,
+ * its formulas set with KaTeX. */
+function PlainTextPreview({
+  path,
+  markdown,
+}: {
+  path: string;
+  markdown: boolean;
+}) {
   const [text, setText] = useState<string>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -207,8 +225,11 @@ function PlainTextPreview({ path }: { path: string }) {
     return () => controller.abort();
   }, [path]);
   if (failed) return <ErrorBanner>{t("error.storage")}</ErrorBanner>;
-  return text === undefined ? (
-    <Skeleton count={6} />
+  if (text === undefined) return <Skeleton count={6} />;
+  return markdown ? (
+    <Suspense fallback={<Skeleton count={6} />}>
+      <ExamMarkdown text={text} />
+    </Suspense>
   ) : (
     <pre className="examDocumentText">{text}</pre>
   );

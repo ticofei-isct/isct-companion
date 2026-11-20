@@ -9,6 +9,9 @@ import SwiftUI
 final class ExamDocumentOpening {
     private(set) var opening: String?
     private(set) var previewURL: URL?
+    /// The site stores Markdown as text/plain and Quick Look would show its
+    /// source, so a Markdown preview opens formatted, with its math set.
+    private(set) var previewIsMarkdown = false
     var downloadURL: URL?
     var reportID: String?
     var uploadedID: String?
@@ -50,6 +53,7 @@ final class ExamDocumentOpening {
     func dismissPreview() {
         guard let previewURL else { return }
         self.previewURL = nil
+        previewIsMarkdown = false
         removeCopy(previewURL)
     }
 
@@ -106,7 +110,9 @@ final class ExamDocumentOpening {
                 return false
             }
             switch destination {
-            case .preview: previewURL = copy
+            case .preview:
+                previewIsMarkdown = isMarkdownName(file.document.fileName)
+                previewURL = copy
             case .download: downloadURL = copy
             }
         } catch {
@@ -217,7 +223,14 @@ private struct ExamDocumentPresentation: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .quickLookPreview(Binding(get: { documents.previewURL }, set: { if $0 == nil { documents.dismissPreview() } }))
+            .quickLookPreview(Binding(get: { documents.previewIsMarkdown ? nil : documents.previewURL },
+                                      set: { if $0 == nil { documents.dismissPreview() } }))
+            .fullScreenCover(isPresented: Binding(get: { documents.previewIsMarkdown && documents.previewURL != nil },
+                                                  set: { if !$0 { documents.dismissPreview() } })) {
+                if let url = documents.previewURL {
+                    ExamMarkdownPreview(url: url) { documents.dismissPreview() }
+                }
+            }
             .fileMover(isPresented: Binding(get: { documents.downloadURL != nil }, set: { if !$0 { documents.downloadURL = nil } }),
                        file: documents.downloadURL) { result in
                 switch result {
@@ -241,5 +254,28 @@ private struct ExamDocumentPresentation: ViewModifier {
             .onChange(of: model.examAccount?.status) { _, status in
                 if status != .connected { documents.clear() }
             }
+    }
+}
+
+/// A Markdown past exam read formatted, with its math, in `MarkdownView`;
+/// the copy can still be shared to another app.
+private struct ExamMarkdownPreview: View {
+    let url: URL
+    let close: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            MarkdownFileView(path: url.path) {
+                ContentUnavailableView(url.lastPathComponent, systemImage: "doc",
+                                       description: Text(t("error.storage")))
+            }
+            .ignoresSafeArea(edges: .bottom)
+            .navigationTitle(url.lastPathComponent)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(t("common.done"), action: close) }
+                ToolbarItem(placement: .primaryAction) { ShareLink(item: url) }
+            }
+        }
     }
 }
