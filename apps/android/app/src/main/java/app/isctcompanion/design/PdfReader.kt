@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import android.util.Size
+import android.view.ContextThemeWrapper
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityManager
@@ -36,6 +37,7 @@ import androidx.pdf.PdfDocument
 import androidx.pdf.SandboxedPdfLoader
 import androidx.pdf.view.PdfView
 import app.isctcompanion.LocalNavigator
+import app.isctcompanion.R
 import app.isctcompanion.core.openLocalFile
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -105,7 +107,7 @@ fun PdfReader(file: File, failure: @Composable () -> Unit) {
         loaded == null -> failure()
         else -> AndroidView(
             factory = { viewContext ->
-                PdfView(viewContext).apply {
+                PdfView(ContextThemeWrapper(viewContext, R.style.Theme_IsctCompanion_PdfReader)).apply {
                     id = viewId
                     addOnAttachStateChangeListener(FastScrollAutoHide(this))
                 }
