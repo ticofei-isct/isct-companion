@@ -975,6 +975,13 @@ impl Page {
             Selection::Entrance { entrance, .. } => Some(entrance),
             _ => None,
         };
+        // The export lists a building's entrances in no particular order:
+        // the card lists them by name, 玄関2 before 玄関10, unnamed last.
+        let mut order: Vec<usize> = (0..record.entrances.len()).collect();
+        order.sort_by_cached_key(|index| match entrance_name(*index) {
+            Some(name) => (false, name_order(&name)),
+            None => (true, Vec::new()),
+        });
         let maps = self.preferences.maps;
         let pin = |index: usize| {
             let label = match entrance_name(index) {
@@ -990,16 +997,15 @@ impl Page {
         let maps_url = match chosen {
             Some(entrance) => pin(entrance),
             None if record.entrances.is_empty() => maps_url(maps, record.center, &place),
-            None => pin(0),
+            None => pin(order[0]),
         };
         let parent = (kind != CampusMapCardKind::Building).then(|| CampusMapPlace::Building {
             id: record.id.clone(),
         });
         let entrances = if kind == CampusMapCardKind::Building {
-            record
-                .entrances
+            order
                 .iter()
-                .enumerate()
+                .map(|&index| (index, &record.entrances[index]))
                 .map(|(index, entrance)| CampusMapEntranceRow {
                     entrance_id: entrance.id.clone(),
                     name: entrance_name(index),
@@ -1113,3 +1119,38 @@ fn level_name(ordinal: i32) -> String {
 #[cfg(test)]
 #[path = "../tests/campus_map__page.rs"]
 mod tests;
+
+/// One run of a name: text, or a number compared by its value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum NamePart {
+    Number(u64),
+    Text(String),
+}
+
+/// A name's order key: runs of digits compare as numbers, so 玄関2 comes
+/// before 玄関10 and 玄関1-2 between 玄関1 and 玄関2.
+fn name_order(name: &str) -> Vec<NamePart> {
+    let mut parts = Vec::new();
+    let mut run = String::new();
+    let mut digits = false;
+    let flush = |run: &mut String, digits: bool, parts: &mut Vec<NamePart>| {
+        if run.is_empty() {
+            return;
+        }
+        let taken = std::mem::take(run);
+        parts.push(match taken.parse() {
+            Ok(number) if digits => NamePart::Number(number),
+            _ => NamePart::Text(taken),
+        });
+    };
+    for character in name.chars() {
+        let digit = character.is_ascii_digit();
+        if digit != digits {
+            flush(&mut run, digits, &mut parts);
+            digits = digit;
+        }
+        run.push(character);
+    }
+    flush(&mut run, digits, &mut parts);
+    parts
+}

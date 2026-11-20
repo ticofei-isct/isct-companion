@@ -316,12 +316,13 @@ pub struct CampusMapCard {
     /// The selection as a pin in the maps app the settings name
     /// (`https://maps.apple.com/?ll=…&q=…` or
     /// `https://www.google.com/maps/search/?api=1&query=…`): the entrance
-    /// selected, else the building's first entrance, else its centre. It is
+    /// selected, else the first entrance on its card, else its centre. It is
     /// the card's one way out of the app; no route is ever drawn.
     pub maps_url: String,
     /// On a room's card, its building: picking it shows the building's card.
     pub building: Option<CampusMapPlace>,
-    /// On a building's card, each of its entrances in the export's order.
+    /// On a building's card, each of its entrances by name (numbers by
+    /// value), unnamed ones last.
     pub entrances: Vec<CampusMapEntranceRow>,
     /// The building to send floor photos of, unless its data is marked
     /// complete or this build cannot send them: the card offers "Upload

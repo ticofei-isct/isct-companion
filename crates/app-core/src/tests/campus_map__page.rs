@@ -15,6 +15,8 @@ use crate::locale::ContentLanguage;
 const W9: &str = "a10026fc-4e59-55a7-9d89-0193f1749620";
 /// 大岡山西講義棟1, south of W9, entered on 3F.
 const WL1: &str = "95e63ef0-8ebc-5502-87ed-1f414753ce93";
+/// 本館: the export lists its eight entrances out of order.
+const MAIN_BUILDING: &str = "2af6a38b-1caa-5516-a54b-c748494f14a9";
 /// 屋内運動場, south-west of W9 and smaller.
 const SPORTS_CENTER: &str = "3a605ae0-88df-4574-aadf-56da13339a23";
 /// Inside W9's footprint, 6 m from the sports center's.
@@ -407,6 +409,31 @@ fn an_entrance_picked_on_the_building_card_shows_its_floor_in_the_map() {
         &mark.kind,
         CampusMapMarkKind::Entrance { entrance_id, selected: true, .. } if *entrance_id == entrance.id
     )));
+    // A card lists the entrances by number, and with none picked its way
+    // out pins the first.
+    let mut page = Page::open(map.clone(), PREFERENCES, None);
+    let card = select(&mut page, building(MAIN_BUILDING))
+        .card
+        .expect("本館's card");
+    let names: Vec<_> = card
+        .entrances
+        .iter()
+        .map(|row| row.name.as_deref().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        names,
+        ["玄関1", "玄関2", "玄関3", "玄関4", "玄関5", "玄関6", "玄関7", "玄関8"]
+    );
+    let first = map.export.buildings[map.buildings[MAIN_BUILDING]]
+        .entrances
+        .iter()
+        .find(|entrance| entrance.id == card.entrances[0].entrance_id)
+        .expect("a row is one of its entrances");
+    let [lng, lat] = first.point;
+    assert!(
+        card.maps_url.contains(&format!("{lat:.7}"))
+            && card.maps_url.contains(&format!("{lng:.7}"))
+    );
 }
 
 #[test]
