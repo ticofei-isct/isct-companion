@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import android.util.Size
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,9 +29,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.pdf.ExperimentalPdfApi
 import androidx.pdf.PdfDocument
 import androidx.pdf.SandboxedPdfLoader
+import androidx.pdf.compose.FastScrollConfiguration
 import androidx.pdf.compose.PdfViewer
 import androidx.pdf.compose.rememberPdfViewerState
 import app.isctcompanion.LocalNavigator
+import app.isctcompanion.R
 import app.isctcompanion.core.openLocalFile
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -96,7 +99,29 @@ fun PdfReader(file: File, failure: @Composable () -> Unit) {
     when {
         result == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
         loaded == null -> failure()
-        else -> PdfViewer(loaded, rememberPdfViewerState(), Modifier.fillMaxSize().background(Theme.colors.surface2))
+        else -> PdfViewer(
+            loaded,
+            rememberPdfViewerState(),
+            Modifier.fillMaxSize().background(Theme.colors.surface2),
+            fastScrollConfig = remember(context) { fastScrollConfig(context) },
+        )
+    }
+}
+
+/** androidx.pdf pins its page scroller on screen whenever any accessibility
+ * service is on, and many phones keep one running (vendor gesture or
+ * security services), so the "page 3/10" label never goes away. A screen
+ * reader needs it; any other service only hides the page under it. In that
+ * case the scroller is given drawables with no size, which androidx.pdf does
+ * not draw or hit-test, so it is gone, not merely transparent. With no
+ * service on, it still shows while scrolling and fades. */
+private fun fastScrollConfig(context: Context): FastScrollConfiguration {
+    val accessibility = context.getSystemService(AccessibilityManager::class.java)
+    val pinnedWithoutReader = accessibility != null && accessibility.isEnabled && !accessibility.isTouchExplorationEnabled
+    return if (pinnedWithoutReader) {
+        FastScrollConfiguration.withDrawableIdsAndDp(R.drawable.pdf_fast_scroll_hidden, R.drawable.pdf_fast_scroll_hidden)
+    } else {
+        FastScrollConfiguration.withDrawableAndDimensionIds()
     }
 }
 
