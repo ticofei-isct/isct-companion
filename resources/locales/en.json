@@ -1780,6 +1780,7 @@
   "lms.pdfNeedsPassword": "This PDF is protected. Enter its password to open it.",
   "lms.pdfPassword": "PDF password",
   "lms.pdfPasswordWrong": "That password is not right. Try again.",
+  "lms.toggleOutline": "Toggle course outline",
   "schoolWeb.signIn.title": "Sign in to {{host}}",
   "schoolWeb.signIn.retry": "The user name or password was not accepted.",
   "schoolWeb.signIn.user": "User name",

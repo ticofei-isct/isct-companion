@@ -108,9 +108,12 @@ export function WorkspaceSidebarToggle({
   collapsed,
   controls,
   onToggle,
+  label = t("common.toggleSidebar"),
 }: {
   panel: RefObject<PanelImperativeHandle | null>;
   collapsed: boolean;
+  /** What the button folds, when the page has more than one sidebar. */
+  label?: string;
   /** The id of the first panel's content. */
   controls: string;
   onToggle?: () => void;
@@ -119,10 +122,10 @@ export function WorkspaceSidebarToggle({
     <button
       type="button"
       className="workspaceSidebarToggle"
-      aria-label={t("common.toggleSidebar")}
+      aria-label={label}
       aria-expanded={!collapsed}
       aria-controls={controls}
-      title={t("common.toggleSidebar")}
+      title={label}
       onClick={() => {
         onToggle?.();
         if (panel.current?.isCollapsed()) panel.current.expand();
