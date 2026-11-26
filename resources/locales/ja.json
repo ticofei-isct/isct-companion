@@ -1780,7 +1780,6 @@
   "lms.pdfNeedsPassword": "この PDF は保護されています。開くにはパスワードを入力してください。",
   "lms.pdfPassword": "PDF のパスワード",
   "lms.pdfPasswordWrong": "パスワードが違います。もう一度入力してください。",
-  "lms.toggleOutline": "コース詳細の表示切替",
   "schoolWeb.signIn.title": "{{host}} にサインイン",
   "schoolWeb.signIn.retry": "ユーザ名またはパスワードが正しくありません。",
   "schoolWeb.signIn.user": "ユーザ名",

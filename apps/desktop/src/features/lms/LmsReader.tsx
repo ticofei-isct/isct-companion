@@ -6,7 +6,7 @@ import {
   type FileAccess,
   type LinkedFolders,
 } from "./RichContent";
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
 import type { Course, Material } from "../../lib/model";
 import { t } from "../../i18n";
 import { announcements, formatLmsDate, safeUrl } from "./content";
@@ -38,7 +38,6 @@ export function LmsReader({
   refreshNotes,
   setDeletedNote,
   reader,
-  start,
 }: {
   opened: OpenedContent;
   shown: OpenedContent;
@@ -60,8 +59,6 @@ export function LmsReader({
     title: string;
   }) => void;
   reader: ReturnType<typeof useLmsReader>;
-  /** Leads the reader's title row (ReaderPane). */
-  start?: ReactNode;
 }) {
   const {
     closeContent,
@@ -72,7 +69,7 @@ export function LmsReader({
     open,
   } = reader;
   return (
-    <ReaderPane title={shown.title} close={closeContent} start={start}>
+    <ReaderPane title={shown.title} close={closeContent}>
       {/* Hidden readers release their documents; the official view keeps its webview. */}
       {!viewerActive && opened.kind !== "official" ? null : opened.kind ===
         "announcement" ? (

@@ -309,7 +309,7 @@ export function useOutlineEntrance({
   at,
   opened,
   setOpenDetails,
-  showOutline,
+  setViewing,
 }: {
   key: string;
   deviceId: string;
@@ -323,8 +323,7 @@ export function useOutlineEntrance({
   at: Section | undefined;
   opened: OpenedContent | undefined;
   setOpenDetails: Dispatch<SetStateAction<string[]>>;
-  /** Brings a folded outline back beside the reader. */
-  showOutline: () => void;
+  setViewing: Dispatch<SetStateAction<boolean>>;
 }) {
   const { outline, setExpanded, setFocusLesson } = state;
   const { current, setPage, placeOutline, revealAssignment } = reading;
@@ -353,7 +352,7 @@ export function useOutlineEntrance({
       setOpenDetails((list) =>
         list.includes(assignment.id) ? list : [...list, assignment.id],
       );
-      showOutline();
+      setViewing(false);
     }
     // No date→section association exists in the current importer. Resume the
     // real reading position rather than guessing the lesson from the week.

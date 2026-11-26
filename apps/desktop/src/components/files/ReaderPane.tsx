@@ -12,13 +12,10 @@ const ToolsHost = createContext<HTMLElement | null>(null);
 export function ReaderPane({
   title,
   close,
-  start,
   children,
 }: {
   title: string;
   close: () => void;
-  /** Leads the title row: the button that brings a folded outline back. */
-  start?: ReactNode;
   children: ReactNode;
 }) {
   const [host, setHost] = useState<HTMLElement | null>(null);
@@ -28,7 +25,6 @@ export function ReaderPane({
       aria-label={t("lms.openedContent")}
     >
       <TitleRow className="workspaceToolPanel lmsReaderTools">
-        {start}
         <span className="lmsReaderTitle" title={title}>
           {title}
         </span>

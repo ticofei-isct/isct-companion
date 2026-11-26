@@ -457,6 +457,14 @@
 .lmsSyllabus .syllabusFrame iframe { flex: 1; height: auto; }
 .lmsRefresh[aria-pressed="true"] { background: var(--accent-soft); }
 
+/* The available course workspace can be narrow even in a wide app window. */
+.lmsWorkspace.narrowReader .lmsWorkspaceBody { display: block; }
+.lmsWorkspace.narrowReader .lmsOutline,
+.lmsWorkspace.narrowReader .lmsViewer { height: 100%; }
+.lmsWorkspace.narrowReader:not(.viewing) .lmsViewer,
+.lmsWorkspace.narrowReader.viewing .lmsOutline { display: none; }
+.lmsWorkspace.narrowReader.viewing .lmsViewer { display: flex; }
+
 .lmsWorkspaceHint { margin: var(--space-4) 0; color: var(--muted); font-size: calc(var(--type-note-size) * var(--text)); line-height: 1.5; }
 
 .lmsPullControls { display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }

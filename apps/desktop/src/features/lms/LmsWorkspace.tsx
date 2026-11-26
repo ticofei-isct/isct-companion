@@ -4,11 +4,7 @@ import { ExamCards } from "../../components/exams/ExamCards";
 import { GuideTip } from "../../components/guide";
 import { useResizeObserver } from "usehooks-ts";
 import { LmsReader } from "./LmsReader";
-import {
-  ResizableWorkspace,
-  WorkspaceSidebarToggle,
-} from "../../components/ResizableWorkspace";
-import { usePanelRef } from "react-resizable-panels";
+import { ResizableWorkspace } from "../../components/ResizableWorkspace";
 import { type OpenedContent } from "./reading-state";
 import { useCourseNotes } from "./useCourseNotes";
 import {
@@ -22,8 +18,6 @@ import "./lms.css";
 import {
   lazy,
   Suspense,
-  useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -95,7 +89,6 @@ export function LmsWorkspaceBody({
   updatedAt,
   markLesson,
   headerStart,
-  foldList,
   openPastExams,
   restoreTimetable,
   openWeb,
@@ -107,8 +100,6 @@ export function LmsWorkspaceBody({
   active: boolean;
   schoolWebAvailable: boolean;
   headerStart?: ReactNode;
-  /** Folds the lecture list away beside this course. */
-  foldList?: () => void;
   openPastExams?: () => void;
   restoreTimetable?: () => void;
   /** Opens a school page on the Web page. */
@@ -145,27 +136,14 @@ export function LmsWorkspaceBody({
   const flip = (list: string[], id: string) =>
     list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
   const [original, setOriginal] = useState(false);
-  // The outline and the reader share the pane at every width. Dragged
-  // narrow, the outline folds away and the reader takes the pane; the button
-  // at the reader's left brings it back.
-  const outlinePanel = usePanelRef();
-  const [outlineFolded, setOutlineFolded] = useState(false);
-  const showOutline = useCallback(() => {
-    if (outlinePanel.current?.isCollapsed()) outlinePanel.current.expand();
-  }, [outlinePanel]);
-  const outlineId = `lms-outline-${course.id}`;
-  // A pane this narrow (half a screen beside the lecture list) leaves the
-  // reader no room beside the outline: opening something folds the list.
+  // Outline and viewer take turns when the workspace pane is narrow. A saved
+  // reader restored into a narrow pane starts on the viewer, not hidden.
+  const [viewing, setViewing] = useState(Boolean(saved?.opened));
   const workspaceRef = useRef<HTMLDivElement>(null!);
-  const workspaceWidth = useResizeObserver({ ref: workspaceRef }).width ?? 0;
-  const roomy = useRef(true);
-  roomy.current = workspaceWidth === 0 || workspaceWidth >= 640;
-  const openedId = opened?.id;
-  useEffect(() => {
-    if (openedId && active && !roomy.current) foldList?.();
-    // Only a newly opened item asks; resizing the window does not.
-  }, [openedId]);
-  const viewerActive = active;
+  const workspaceSize = useResizeObserver({ ref: workspaceRef });
+  const narrow =
+    (workspaceSize.width ?? 0) > 0 && (workspaceSize.width ?? 0) < 640;
+  const viewerActive = active && (!narrow || viewing);
 
   const limit = downloadLimit(data.settings);
   const files = useMemo<FileAccess>(
@@ -359,7 +337,7 @@ export function LmsWorkspaceBody({
     outline,
     recordPosition,
     setOpened,
-    showOutline,
+    setViewing,
     revealAssignment,
     openWeb,
     setArchiveItems,
@@ -386,6 +364,7 @@ export function LmsWorkspaceBody({
   const noteKey = sections.map((s) => `${s.id}:${s.title}`).join("\n");
   const noteSections = useMemo(
     () => sections.map(({ id, title }) => ({ id, title })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [noteKey],
   );
   const {
@@ -433,7 +412,7 @@ export function LmsWorkspaceBody({
     at,
     opened,
     setOpenDetails,
-    showOutline,
+    setViewing,
   });
   const toggle = (id: string) =>
     setExpanded((previous) =>
@@ -738,24 +717,17 @@ export function LmsWorkspaceBody({
   };
   return (
     <div
-      className={`lmsWorkspace${opened ? " hasViewer" : ""}`}
+      className={`lmsWorkspace${narrow ? " narrowReader" : ""}${opened ? " hasViewer" : ""}${viewing ? " viewing" : ""}`}
     >
       <div className="lmsWorkspaceBody" ref={workspaceRef}>
         <ResizableWorkspace
           id={`reading-${course.id}`}
-          enabled={Boolean(opened)}
+          enabled={!narrow && Boolean(opened)}
           firstSize="44%"
           firstMin={220}
           secondMin={260}
-          firstCollapsible
-          firstPanelRef={outlinePanel}
-          onFirstCollapse={setOutlineFolded}
         >
-          <aside
-            className="lmsOutline"
-            id={outlineId}
-            inert={Boolean(opened) && outlineFolded}
-          >
+          <aside className="lmsOutline">
             <TitleRow className="lmsWorkspaceHeader">
               {headerStart}
               <div className="lmsCourseIdentity">
@@ -1072,19 +1044,6 @@ export function LmsWorkspaceBody({
               refreshNotes={refreshNotes}
               setDeletedNote={setDeletedNote}
               reader={reader}
-              start={
-                outlineFolded ? (
-                  <>
-                    {headerStart}
-                    <WorkspaceSidebarToggle
-                      panel={outlinePanel}
-                      collapsed
-                      controls={outlineId}
-                      label={t("lms.toggleOutline")}
-                    />
-                  </>
-                ) : undefined
-              }
             />
           )}
         </ResizableWorkspace>

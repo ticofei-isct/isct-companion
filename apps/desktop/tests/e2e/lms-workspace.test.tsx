@@ -335,8 +335,6 @@ type WorkspaceOptions = {
   handle?: FakeCoreOptions["handle"];
   /** The resident school view is available (the native desktop app). */
   schoolWebAvailable?: boolean;
-  /** The lecture desk's request to fold its list away. */
-  foldList?: () => void;
 };
 
 /** Mounts the real reading workspace over the scripted host. */
@@ -382,7 +380,6 @@ async function openWorkspace(
     active: options.active ?? true,
     schoolWebAvailable: options.schoolWebAvailable ?? false,
     markLesson: options.markLesson,
-    foldList: options.foldList,
   };
   const view = await mount(
     <>
@@ -434,7 +431,7 @@ const lectureRoute = (courseId: string) =>
   `/lectures/${encodeURIComponent(courseId)}`;
 
 describe("the LMS reading workspace", () => {
-  it("keeps the outline beside a reader in a narrow pane and folds the lecture list to make room", async () => {
+  it("restores a saved reader when the workspace pane starts narrow", async () => {
     const fixture = lectureFixture();
     sessionStorage.setItem(
       `lms-reading:${fixture.workspace.deviceId}:${fixture.course.id}`,
@@ -445,8 +442,8 @@ describe("the LMS reading workspace", () => {
         opened: { id: "m1", title: "Lecture file", kind: "material" },
       }),
     );
-    // jsdom has no layout; report a narrow pane, as a window snapped to half
-    // the screen leaves it beside the lecture list.
+    // jsdom has no layout; report the narrow width the outline and viewer
+    // switch at, as a Windows snap or a side panel leaves the pane.
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -475,25 +472,15 @@ describe("the LMS reading workspace", () => {
       },
     );
 
-    const foldList = vi.fn();
-    const { host } = await openWorkspace(fixture, { foldList });
-    // A restored reader opens beside the outline, one split at every width.
+    const { host } = await openWorkspace(fixture);
+    const workspace = () => host.querySelector(".lmsWorkspace");
     await waitFor(() =>
-      expect(host.querySelector(".lmsViewerBody")?.textContent).toContain(
-        "Readable file body",
-      ),
+      expect(workspace()?.classList.contains("narrowReader")).toBe(true),
     );
-    expect(
-      host.querySelector(".splitWorkspace")?.getAttribute("data-resizable"),
-    ).toBe("true");
-    expect(host.querySelector(".lmsOutline")?.hasAttribute("inert")).toBe(
-      false,
+    expect(workspace()?.classList.contains("viewing")).toBe(true);
+    expect(host.querySelector(".lmsViewerBody")?.textContent).toContain(
+      "Readable file body",
     );
-    // Restoring asks nothing of the lecture list; opening an item does.
-    expect(foldList).not.toHaveBeenCalled();
-    await click(host.querySelector<HTMLButtonElement>(".lmsViewerClose")!);
-    await click(itemRow(host, "Lecture file"));
-    await waitFor(() => expect(foldList).toHaveBeenCalledTimes(1));
   }, 30_000);
 
   it("lays out every lesson as a page and opens the outline where the course is", async () => {

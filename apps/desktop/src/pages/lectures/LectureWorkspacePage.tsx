@@ -132,7 +132,7 @@ export function LectureWorkspacePage({
       select={(courseId, assignmentId, term) =>
         openLecture(courseId, { assignmentId, term })
       }
-      renderWorkspace={(entry, active, sidebarToggle, foldList) => {
+      renderWorkspace={(entry, active, sidebarToggle) => {
         const course = data.courses.find(
           (c) => c.id === entry.courseId && !c.deletedAt,
         );
@@ -147,7 +147,6 @@ export function LectureWorkspacePage({
               entry={entry}
               active={active}
               headerStart={sidebarToggle}
-              foldList={foldList}
               openPastExams={openPastExams && (() => openPastExams(course.id))}
               restoreTimetable={
                 !readOnly && timetable?.kind === "lms" && timetable.canRestore

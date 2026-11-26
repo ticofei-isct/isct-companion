@@ -15,7 +15,7 @@ export function useLmsReader({
   outline,
   recordPosition,
   setOpened,
-  showOutline,
+  setViewing,
   revealAssignment,
   openWeb,
   setArchiveItems,
@@ -31,8 +31,7 @@ export function useLmsReader({
   outline: RefObject<HTMLDivElement | null>;
   recordPosition: (host: HTMLDivElement) => void;
   setOpened: Dispatch<SetStateAction<OpenedContent | undefined>>;
-  /** Brings a folded outline back beside the reader. */
-  showOutline: () => void;
+  setViewing: Dispatch<SetStateAction<boolean>>;
   revealAssignment: (id: string) => void;
   openWeb?: (url: string) => void;
   setArchiveItems: Dispatch<SetStateAction<string[]>>;
@@ -47,6 +46,7 @@ export function useLmsReader({
     (content: OpenedContent) => {
       if (outline.current) recordPosition(outline.current);
       setOpened(content);
+      setViewing(true);
     },
     [query],
   );
@@ -98,7 +98,7 @@ export function useLmsReader({
   const openWebPage = (url: string, title: string) =>
     open({ id: `official:${url}`, title, kind: "official", url });
   const openAssignment = useCallback((a: Assignment) => {
-    showOutline();
+    setViewing(false);
     requestAnimationFrame(() => revealAssignment(a.id));
   }, []);
   /** The course item a link points at, by its page or its file. */
@@ -139,6 +139,7 @@ export function useLmsReader({
   const closeContent = () => {
     if (outline.current) recordPosition(outline.current);
     setOpened(undefined);
+    setViewing(false);
   };
 
   const material =
