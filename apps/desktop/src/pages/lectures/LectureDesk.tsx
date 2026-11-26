@@ -100,6 +100,25 @@ function LectureDeskBody({
   const [floating, setFloating] = useState(false);
   const [listHovered, setListHovered] = useState(false);
   const [listFocused, setListFocused] = useState(false);
+  const list = useRef<HTMLElement>(null);
+  // Folding the list or leaving it ends the float: the pointer and focus it
+  // had stay on the list as it folds, so they are let go here, and a press
+  // anywhere else closes it even where nothing takes focus (a document).
+  const endFloat = () => {
+    setFloating(false);
+    setListHovered(false);
+    setListFocused(false);
+    if (list.current?.contains(document.activeElement))
+      (document.activeElement as HTMLElement).blur();
+  };
+  useEffect(() => {
+    if (!floating) return;
+    const press = (event: PointerEvent) => {
+      if (!list.current?.contains(event.target as Node)) endFloat();
+    };
+    document.addEventListener("pointerdown", press, true);
+    return () => document.removeEventListener("pointerdown", press, true);
+  }, [floating]);
   useEffect(() => {
     if (!active || !collapsed) {
       setFloating(false);
@@ -114,7 +133,7 @@ function LectureDeskBody({
     return () => window.clearTimeout(timer);
   }, [active, collapsed, railHovered, listHovered, listFocused]);
   const choose = (courseId: string, assignmentId?: string) => {
-    setFloating(false);
+    endFloat();
     setQuery("");
     chosenHere.current = true;
     select(courseId, assignmentId, shownTerm);
@@ -224,7 +243,7 @@ function LectureDeskBody({
       panel={sidebar}
       collapsed={collapsed}
       controls="lecture-sidebar"
-      onToggle={() => setFloating(false)}
+      onToggle={endFloat}
     />
   );
   // With the list folded away the content column is first after the rail,
@@ -239,10 +258,7 @@ function LectureDeskBody({
       data-sidebar-collapsed={collapsed}
       data-sidebar-floating={collapsed && floating}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && floating) {
-          setFloating(false);
-          setListFocused(false);
-        }
+        if (event.key === "Escape" && floating) endFloat();
       }}
     >
       <ResizableWorkspace
@@ -258,6 +274,7 @@ function LectureDeskBody({
       >
         <nav
           id="lecture-sidebar"
+          ref={list}
           className="lectureList"
           aria-label={t("common.lectures")}
           inert={collapsed && !floating}
