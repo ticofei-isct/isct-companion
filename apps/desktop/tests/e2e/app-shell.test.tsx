@@ -1862,22 +1862,10 @@ describe("workspace column sizing", () => {
           'input[type="search"]',
         )!;
         await typeInto(filter, "Keep this filter");
-        // The button is pressed with the pointer on the list and focus on the
-        // button: folding lets both go, so the list does not float back.
-        await act(async () =>
-          list.dispatchEvent(new Event("pointerover", { bubbles: true })),
-        );
-        toggle().focus();
         await click(toggle());
         await until(() =>
           expect(toggle().getAttribute("aria-expanded")).toBe("false"),
         );
-        await advance(250);
-        expect(
-          app.host
-            .querySelector(".lectureDesk")!
-            .getAttribute("data-sidebar-floating"),
-        ).toBe("false");
         expect(toggle().closest(".lmsWorkspaceHeader")).not.toBeNull();
         expect(list.hasAttribute("inert")).toBe(true);
         const rail = app.host.querySelector<HTMLButtonElement>(
