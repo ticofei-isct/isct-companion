@@ -87,6 +87,8 @@ function LectureDeskBody({
     entry: CourseEntry,
     active: boolean,
     sidebarToggle?: ReactNode,
+    /** Folds the list away, as the sidebar button does. */
+    foldList?: () => void,
   ) => ReactNode;
   /** Brings a hidden assignment back to Today and this list. */
   restoreAssignment?: (assignmentId: string) => void;
@@ -444,6 +446,7 @@ function LectureDeskBody({
                     entry?.courseId === item.courseId
                       ? contentStart
                       : undefined,
+                    () => sidebar.current?.collapse(),
                   )}
                 </KeptPage>
               </div>
