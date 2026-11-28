@@ -15,8 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -316,6 +316,7 @@ fun MaterialRow(item: MaterialItem) {
             Tag(t("common.addedToday"))
         }
     }
+    opening.Banner()
 }
 
 /** A button's level (slotledger `approach/button-hierarchy`). */
@@ -377,34 +378,6 @@ fun EmptyState(icon: ImageVector, text: String, modifier: Modifier = Modifier, a
     }
 }
 
-/** A problem that stops the page: one line on the danger tint at the top,
- * with Retry when the page can try again (slotledger
- * `approach/feedback-banner-toast`). */
-@Composable
-fun ProblemBanner(text: String, onRetry: (() -> Unit)? = null) {
-    val model = LocalModel.current
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(Theme.space5),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Theme.radiusSurface))
-            .background(Theme.colors.dangerSoft)
-            .padding(start = Theme.space7, top = Theme.space2, bottom = Theme.space2),
-    ) {
-        Icon(Icons.Rounded.ErrorOutline, null, tint = Theme.colors.danger, modifier = Modifier.padding(top = Theme.space5))
-        Text(
-            text, style = MaterialTheme.typography.bodyMedium, color = Theme.colors.ink,
-            modifier = Modifier.weight(1f).padding(vertical = Theme.space5),
-        )
-        onRetry?.let { retry ->
-            TextButton(onClick = retry) { Text(t("common.retry"), fontWeight = FontWeight.SemiBold, color = Theme.colors.danger) }
-        }
-        IconButton(onClick = { model.dismissProblem() }) {
-            Icon(Icons.Rounded.Close, t("common.close"), tint = Theme.colors.muted, modifier = Modifier.size(18.dp))
-        }
-    }
-}
-
 /** A tab's page (or a pushed one, with `navigationIcon`): a one-line title bar over scrolling content, pull to
  * refresh when `onRefresh` is given. The content scrolls itself. The bar never grows: Material's large title
  * folded away on scrolling down and opened again at the top, taking the height from the content each time. */
@@ -417,8 +390,6 @@ fun TabPage(
     onRefresh: (suspend () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    var refreshing by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = Theme.colors.bg,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -434,22 +405,33 @@ fun TabPage(
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
-            if (onRefresh == null) {
-                content()
-            } else {
-                PullToRefreshBox(
-                    isRefreshing = refreshing,
-                    onRefresh = {
-                        scope.launch {
-                            refreshing = true
-                            onRefresh()
-                            refreshing = false
-                        }
-                    },
-                ) { content() }
-            }
+            if (onRefresh == null) content() else RefreshBox(onRefresh) { content() }
         }
     }
+}
+
+/** Material's pull to refresh around a page's scrolling content, spinning
+ * until `onRefresh` returns; [TabPage] uses it, and so does a page with a
+ * header of its own (時間割). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RefreshBox(onRefresh: suspend () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var refreshing by remember { mutableStateOf(false) }
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        modifier = modifier,
+        onRefresh = {
+            scope.launch {
+                refreshing = true
+                try {
+                    onRefresh()
+                } finally {
+                    refreshing = false
+                }
+            }
+        },
+    ) { content() }
 }
 
 /** The muted line under a page title: date, quarter, week. */

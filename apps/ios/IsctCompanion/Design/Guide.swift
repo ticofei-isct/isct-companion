@@ -2,7 +2,7 @@ import SwiftUI
 import TipKit
 
 // First-run guidance (slotledger `approach/first-launch`): one welcome sheet,
-// then TipKit's one-time tips beside the gestures nobody can see. TipKit owns
+// then TipKit's one-time tips beside the controls they explain. TipKit owns
 // display frequency and persistence; tips wait until the sheet is closed.
 
 enum Guide {
@@ -31,9 +31,10 @@ enum Guide {
     }
 }
 
+/// The one gesture 時間割 has no button for; weeks and the export are in its
+/// header.
 struct TimetableMarkTip: Tip {
-    var title: Text { Text(t("guide.swipeToChangeWeeks")) }
-    var message: Text? { Text(t("guide.longPressAClassTo")) }
+    var title: Text { Text(t("timetable.longPressAClassTo")) }
     var image: Image? { Image(systemName: "hand.draw") }
     var rules: [Rule] { #Rule(Guide.$welcomed) { $0 == true } }
 }
@@ -45,17 +46,8 @@ struct LessonMarkTip: Tip {
     var rules: [Rule] { #Rule(Guide.$welcomed) { $0 == true } }
 }
 
-struct AssignmentSwipeTip: Tip {
-    var title: Text { Text(t("guide.pinOrHide")) }
-    var message: Text? { Text(t("guide.swipeRightToPinAn")) }
-    var image: Image? { Image(systemName: "hand.draw") }
-    var rules: [Rule] { #Rule(Guide.$welcomed) { $0 == true } }
-}
-
-struct WebSitesTip: Tip {
-    var title: Text { Text(t("common.switchSites")) }
-    var message: Text? { Text(t("guide.tapTheTitleOrLong")) }
-    var image: Image? { Image(systemName: "globe") }
+struct FeedbackTip: Tip {
+    var title: Text { Text(t("guide.feedbackHint")) }
     var rules: [Rule] { #Rule(Guide.$welcomed) { $0 == true } }
 }
 
@@ -90,13 +82,6 @@ struct WelcomeSheet: View {
                     .listRowBackground(Theme.surface)
                 } header: {
                     Text(t("guide.courseAndSyllabusLanguage"))
-                } footer: {
-                    Text(t("guide.canDifferFromTheApp"))
-                }
-                Section {
-                    Label(t("widget.addOnPhone"), systemImage: "square.grid.2x2")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
                 Section {
                     if model.needsAccount {
@@ -134,26 +119,5 @@ struct WelcomeSheet: View {
             get: { model.records.settings.text(key) ?? fallback },
             set: { value in Task { await model.updateSettings { $0[key] = value } } }
         )
-    }
-}
-
-extension View {
-    /// Shows the welcome sheet once per device; closing it lets the tips in.
-    func welcomeSheet(connect: @escaping () -> Void) -> some View {
-        modifier(WelcomePresenter(connect: connect))
-    }
-}
-
-private struct WelcomePresenter: ViewModifier {
-    let connect: () -> Void
-    @AppStorage(Guide.welcomeKey) private var welcomed = false
-
-    func body(content: Content) -> some View {
-        content.sheet(
-            isPresented: Binding(get: { !welcomed }, set: { if !$0 { welcomed = true } }),
-            onDismiss: { Guide.welcomed = true }
-        ) {
-            WelcomeSheet(connect: connect)
-        }
     }
 }

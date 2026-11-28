@@ -816,7 +816,7 @@ private fun StatusLine(check: PrinterCheck, onCheckAgain: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Icon(Icons.Rounded.Refresh, contentDescription = null, tint = Theme.colors.accent, modifier = Modifier.size(18.dp))
-                Text(t("tools.campusPrinter.checkAgain"), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Theme.colors.accent)
+                Text(t("tools.checkAgain"), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Theme.colors.accent)
             }
         }
     }

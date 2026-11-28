@@ -14,16 +14,17 @@ export function LectureExamList({
   schedule,
   query,
   search,
-  examKey,
+  selection,
   chooseExam,
 }: {
   schedule?: LectureList;
   query: string;
   search?: LectureSearch;
-  examKey: string | null;
+  selection: { key: string; request: number } | null;
   chooseExam: (key: string, term: string) => void;
 }) {
   const [showEnded, setShowEnded] = useState(false);
+  const examKey = selection?.key;
   const needle = query.trim().toLowerCase();
   const byKey = new Map(
     (schedule?.exams ?? []).map((exam) => [exam.key, exam]),
@@ -47,13 +48,13 @@ export function LectureExamList({
   const ended = pick(groups?.endedKeys);
   // An ended exam opened from elsewhere unfolds its group once, so the
   // selected row shows; the person can fold it again.
-  const [unfoldedFor, setUnfoldedFor] = useState<string | null>(null);
+  const [unfoldedFor, setUnfoldedFor] = useState<number | undefined>(undefined);
   if (
-    examKey &&
-    examKey !== unfoldedFor &&
-    ended.some((exam) => exam.key === examKey)
+    selection &&
+    selection.request !== unfoldedFor &&
+    ended.some((exam) => exam.key === selection.key)
   ) {
-    setUnfoldedFor(examKey);
+    setUnfoldedFor(selection.request);
     setShowEnded(true);
   }
   // A search shows every match.

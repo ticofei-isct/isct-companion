@@ -9,17 +9,15 @@ import {
   SlidersHorizontal,
   Wrench,
 } from "lucide-react";
-import { useDesktopUpdates } from "./useDesktopUpdates";
 import { CalendarView } from "../pages/today/CalendarView";
-import { DataNotice } from "../components/DataNotice";
 import {
   ResizableWorkspace,
   WorkspaceSidebarToggle,
 } from "../components/ResizableWorkspace";
 import { TitlebarNav } from "../components/TitleRow";
 import { usePanelRef } from "react-resizable-panels";
-import { WelcomeSheet } from "../components/guide";
 import { refresh, syncAvailable } from "../platform/sync-intents";
+import { WorkspaceDialogs } from "./WorkspaceDialogs";
 import { useOpenHint } from "./useOpenHint";
 import { useSync } from "../store/sync";
 import { useAnimatedNavigate } from "./navigation";
@@ -28,7 +26,6 @@ import { useCoreLifecycle } from "./useCoreLifecycle";
 import { useWorkspaceRuntime } from "./useWorkspaceRuntime";
 import { useAppearance } from "./useAppearance";
 import {
-  scheduleQuery,
   useScheduleQuery,
   type WorkspaceOverview,
 } from "../platform/core-query";
@@ -50,10 +47,11 @@ import {
 } from "./routes";
 import { notify } from "../components/notifications/notify";
 import { UiButton } from "../components/ui";
-import { ConfirmDialogs } from "../components/confirm";
 import { t } from "../i18n";
 import { useTranslation } from "react-i18next";
 import { desktopBridge } from "../platform/native";
+import { nativeOs } from "../platform/desktop-bridge";
+import { railPageOrder, shortcutHint, shortcutPage } from "../lib/shortcuts";
 import { hideNativeSchoolWeb } from "../platform/school-web-owner";
 import { type Page, type Section } from "../lib/route-contract";
 import { Today } from "../pages/today/TodayPage";
@@ -77,35 +75,40 @@ import { availableTools } from "../platform/available-tools";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { workspaceActions, workspaceStore } from "../store/workspace";
 import { useWorkspace } from "../store/useWorkspace";
-import { detectPlatform, resolveCapabilities } from "../platform/capabilities";
+import {
+  detectPlatform,
+  resolveCapabilities,
+  type Platform,
+} from "../platform/capabilities";
 import { useSchoolSession } from "../platform/school-session";
-import type { SchoolProfileSession } from "../generated/persistence";
+import type {
+  AnnouncementsView,
+  SchoolProfileSession,
+} from "../generated/persistence";
 import { onWidgetRoute } from "../platform/widget-links";
 import { performAction } from "../platform/actions";
 import { PageErrorBoundary } from "./PageErrorBoundary";
 import { KeptPage } from "./KeptPage";
 import { traceRouter } from "./interaction-trace";
-import type { ClassGroupChoice, TermId, Workspace } from "../lib/model";
-import { tokyoDate } from "../lib/civil-date";
-import { wallNow } from "../platform/use-clock";
+import type { TermId, Workspace } from "../lib/model";
 import { useRecords } from "../platform/records";
-import { ClassGroupPrompt } from "../pages/courses/ClassGroupPicker";
 import type { WorkspaceIntent } from "../lib/workspace-intents";
 
 /** Credentials are saved and the school has not turned them down. */
+/** The rail pages this build shows. */
+const railPagesFor = (platform: Platform) =>
+  pages.filter(
+    (p) =>
+      (p !== "tools" || availableTools(platform).length > 0) &&
+      (p !== "pastExams" || desktopBridge !== undefined),
+  );
+
 const connectedSession = (session: SchoolProfileSession | undefined) =>
   session !== undefined &&
   session.state !== "not-configured" &&
   session.state !== "refused";
 
-const pages: Page[] = [
-  "home",
-  "timetable",
-  "lectures",
-  "web",
-  "tools",
-  "pastExams",
-];
+const pages = railPageOrder;
 // Home orients (today and the week); Lectures is where a course is studied.
 const icons: Record<Page, React.ReactElement> = {
   timetable: <CalendarDays aria-hidden strokeWidth={1.75} />,
@@ -149,10 +152,11 @@ export function WorkspaceApp() {
   const storeError = useWorkspace((state) => state.error);
   const data = useRecords(SHELL_RECORDS, storeReady);
   const sourceData = data;
-  useDesktopUpdates(
-    Boolean(sourceData),
-    sourceData?.settings.automaticAppUpdates,
-  );
+  const { value: announcements, pending: readingAnnouncements } =
+    useScheduleQuery<AnnouncementsView>(
+      { kind: "announcements" },
+      Boolean(desktopBridge && sourceData),
+    );
   const overview = useScheduleQuery<WorkspaceOverview>(
     { kind: "workspaceOverview", term: "" },
     Boolean(sourceData),
@@ -379,26 +383,6 @@ export function WorkspaceApp() {
   }, [location.pathname, location.search, sourceData?.courses, navigate]);
   const sync = useSync();
   useCoreLifecycle();
-  const [groupPrompt, setGroupPrompt] = useState<ClassGroupChoice | null>(null);
-  /** After a pull settles the timetable, ask once for the physics group of
-   * a current or later semester that has none. */
-  const askClassGroup = async () => {
-    // The question is a convenience; a failed read must not fail the pull.
-    const choices = await scheduleQuery<ClassGroupChoice[]>({
-      kind: "classGroups",
-      today: tokyoDate(new Date(wallNow())),
-    }).catch(() => []);
-    setGroupPrompt(choices.find((choice) => choice.needsChoice) ?? null);
-  };
-  // The ingest's commit patches the records through `workspace-changed`.
-  useEffect(
-    () =>
-      desktopBridge?.onSchoolIngest?.((outcome) => {
-        if (outcome.site === "science-lms" && outcome.state === "ok")
-          notify.updated(outcome.changed);
-      }),
-    [],
-  );
   const { schedulerState, nativeCapabilities, nativeCapabilitiesReady } =
     useWorkspaceRuntime(sourceData);
   useAppearance(data);
@@ -412,15 +396,10 @@ export function WorkspaceApp() {
   }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        ["1", "2", "3", "4", "5", "6"].includes(e.key)
-      ) {
-        e.preventDefault();
-        const next: Page =
-          e.key === "6" ? "settings" : pages[Number(e.key) - 1];
-        void navigate(pagePath(next));
-      }
+      const next = shortcutPage(e, nativeOs(), railPagesFor(detectPlatform()));
+      if (!next) return;
+      e.preventDefault();
+      void navigate(pagePath(next));
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
@@ -431,22 +410,6 @@ export function WorkspaceApp() {
   useOpenHint(lectureOpenView(page === "lectures", lectureEntry, sourceData));
   useOpenHint(page === "timetable" ? { kind: "timetable" } : null);
   useOpenHint(page === "timetable" ? { kind: "grades" } : null);
-  // A 教務Web read that lands may settle a semester's physics group.
-  const kyomuUpdated =
-    sync.sources.find((source) => source.source === "kyomu")?.lastUpdated ??
-    null;
-  const seenKyomu = useRef<string | null | undefined>(undefined);
-  useEffect(() => {
-    if (!sync.sources.length) return;
-    if (
-      seenKyomu.current !== undefined &&
-      kyomuUpdated &&
-      kyomuUpdated !== seenKyomu.current
-    )
-      void askClassGroup();
-    seenKyomu.current = kyomuUpdated;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kyomuUpdated, sync.sources.length]);
   const workspaceView = planningTerm.workspaceView;
   if (!data || !overview.value || !workspaceView)
     return (
@@ -610,16 +573,19 @@ export function WorkspaceApp() {
       data-sidebar-collapsed={todayFolded}
     >
       {showSchoolSetup && (
-        <aside className="homeSetup" aria-label={t("app.schoolAccountSetup")}>
-          <div>
-            <b>{t("app.connectYourSchoolAccounts")}</b>
-            <p>{t("app.connectTokyoTechForYour")}</p>
-          </div>
+        // One line: the welcome sheet already offered this, so after
+        // "Later" the page only keeps the way back to it.
+        <aside
+          className="homeSetup"
+          aria-label={t("app.schoolAccountSetup")}
+          title={t("app.connectTokyoTechForYour")}
+        >
+          <span>{t("app.connectYourSchoolAccounts")}</span>
           <UiButton
-            className="button primary"
+            className="textButton"
             onClick={() => void navigate(paths.settings("accounts"))}
           >
-            {t("common.connectSchoolAccounts")}
+            {t("common.connectSchoolAccounts")} ›
           </UiButton>
         </aside>
       )}
@@ -638,8 +604,9 @@ export function WorkspaceApp() {
           <Today
             data={data}
             sidebar={todayFolded ? undefined : todayToggle}
-            active={page === "home"}
+            active={page === "home" && !todayFolded}
             term={todayTerm}
+            announcements={announcements?.active}
             openExam={openExam}
             open={(courseId, _tab, context) => openLecture(courseId, context)}
             openEvent={(event) =>
@@ -654,11 +621,23 @@ export function WorkspaceApp() {
                 openLecture(assignment.courseId, { assignmentId });
             }}
             hideAssignment={(assignmentId) =>
-              void academicIntent({
+              void academicIntentOrThrow({
                 kind: "setAssignmentMark",
                 assignmentId,
                 hidden: true,
-              })
+              }).then(
+                () =>
+                  notify.undoable(
+                    t("today.assignmentHidden"),
+                    () =>
+                      void academicIntent({
+                        kind: "setAssignmentMark",
+                        assignmentId,
+                        hidden: false,
+                      }),
+                  ),
+                notify.error,
+              )
             }
             openAssignments={() => {
               setAssignmentsRequest(Date.now());
@@ -772,42 +751,18 @@ export function WorkspaceApp() {
   );
   const overlays = (
     <>
-      <WelcomeSheet
+      <WorkspaceDialogs
         settings={data.settings}
         update={update}
+        readOnly={readOnly}
         connected={
           connectedSession(scienceSession) || connectedSession(tokyoTechSession)
         }
-        held={!readOnly && !data.settings.dataNoticeAcknowledgedAt}
-        openAccounts={() => void navigate(paths.settings("accounts"))}
+        openAccounts={openAccounts}
         openAgents={() => void navigate(paths.settings("agent"))}
+        announcements={announcements ?? undefined}
+        readingAnnouncements={readingAnnouncements}
       />
-      {!readOnly && !data.settings.dataNoticeAcknowledgedAt && (
-        <DataNotice
-          acknowledge={() =>
-            update((draft) => ({
-              ...draft,
-              settings: {
-                ...draft.settings,
-                dataNoticeAcknowledgedAt: new Date().toISOString(),
-              },
-            }))
-          }
-        />
-      )}
-      {/* Editors show a failed submission inline and stay open. */}
-      {groupPrompt && (
-        <ClassGroupPrompt
-          choice={groupPrompt}
-          later={() => setGroupPrompt(null)}
-          choose={(group) => {
-            setGroupPrompt(null);
-            void workspaceActions
-              .setClassGroup(groupPrompt.semester, group)
-              .catch(notify.error);
-          }}
-        />
-      )}
       <CourseEditors
         data={data}
         workspaceView={workspaceView}
@@ -815,11 +770,7 @@ export function WorkspaceApp() {
       />
     </>
   );
-  const railPages = pages.filter(
-    (p) =>
-      (p !== "tools" || availableTools(platform).length > 0) &&
-      (p !== "pastExams" || desktopBridge !== undefined),
-  );
+  const railPages = railPagesFor(platform);
   return (
     <div className="app" data-density={data.settings.density}>
       <aside className="rail">
@@ -845,7 +796,7 @@ export function WorkspaceApp() {
                   ? () => setLectureRailHovered(false)
                   : undefined
               }
-              title={`${navigation[p]} (⌘${pages.indexOf(p) + 1})`}
+              title={`${navigation[p]} (${shortcutHint(p, nativeOs())})`}
             >
               {icons[p]}
               <span>{navigation[p]}</span>
@@ -858,7 +809,11 @@ export function WorkspaceApp() {
               key={p}
               className={`railUtility${page === p ? " active" : ""}`}
               onClick={() => void navigate(pagePath(p))}
-              title={navigation[p]}
+              title={
+                shortcutHint(p, nativeOs())
+                  ? `${navigation[p]} (${shortcutHint(p, nativeOs())})`
+                  : navigation[p]
+              }
             >
               {icons[p]}
               <span>{navigation[p]}</span>
@@ -917,7 +872,6 @@ export default function App({
   return (
     <>
       <Notifications />
-      <ConfirmDialogs />
       <RouterProvider router={router} />
     </>
   );

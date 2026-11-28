@@ -92,8 +92,11 @@ struct ExamUploadSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                // An empty selection is where the sheet starts, not a mistake;
+                // the disabled send button says enough.
                 if !running, upload?.phase != .pending, checkedFiles == uploadFiles,
-                   let reason = readiness?.reasonKey {
+                   let reason = readiness?.reasonKey,
+                   !(uploadFiles.isEmpty && reason == "error.exam-share-upload-no-files") {
                     Section { Text(t(reason)).foregroundStyle(Theme.danger) }
                 }
                 if let stageLabel {
@@ -178,6 +181,7 @@ struct ExamUploadSheet: View {
                 }
                 .ignoresSafeArea()
             }
+            .appNoticeFlow()
             .sheet(isPresented: $choosingSubject) {
                 ExamUploadSubjectPicker(selected: Set(form?.draft.subjectCodes ?? []), limit: choices?.limits.searchQuery) { subject in
                     try await edit(.addSubject(code: subject.code))

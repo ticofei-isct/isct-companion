@@ -60,6 +60,7 @@ final class SchoolBrowserHost: NSObject, NativeBrowser, @unchecked Sendable {
     @MainActor var onOpenExternal: ((URL) -> Void)?
     @MainActor var onDownload: ((URL) -> Void)?
     @MainActor var onDownloadError: ((Error) -> Void)?
+    @MainActor var onNativeDialog: ((UUID, Bool) -> Void)?
 
     // MARK: NativeBrowser (Core worker threads)
 
@@ -684,6 +685,7 @@ private final class SchoolPage: NSObject, WKNavigationDelegate, WKUIDelegate, WK
         if cancel {
             alert.addAction(UIAlertAction(title: t("common.cancel"), style: .cancel) { _ in reply.answer(nil) })
         }
+        trackPrompt(alert)
         presenter.present(alert, animated: true)
     }
 
@@ -730,7 +732,15 @@ private final class SchoolPage: NSObject, WKNavigationDelegate, WKUIDelegate, WK
                 URLCredential(
                     user: fields.first?.text ?? "", password: fields.last?.text ?? "", persistence: .forSession))
         })
+        trackPrompt(alert)
         presenter.present(alert, animated: true)
+    }
+
+    private func trackPrompt(_ alert: UIAlertController) {
+        let id = UUID()
+        let tracker = SchoolPromptVisibility(frame: .zero)
+        tracker.report = { [weak host = host] shown in host?.onNativeDialog?(id, shown) }
+        alert.view.addSubview(tracker)
     }
 
     // MARK: Downloads
@@ -803,5 +813,20 @@ private final class SchoolPage: NSObject, WKNavigationDelegate, WKUIDelegate, WK
             }
         }
         downloads.removeAll()
+    }
+}
+
+
+/// Reports the native window lifetime without changing WebKit's answer callbacks.
+@MainActor private final class SchoolPromptVisibility: UIView {
+    var report: ((Bool) -> Void)?
+    private var shown = false
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        let visible = window != nil
+        guard visible != shown else { return }
+        shown = visible
+        report?(visible)
     }
 }

@@ -143,6 +143,7 @@ export function LmsWorkspaceBody({
   const workspaceSize = useResizeObserver({ ref: workspaceRef });
   const narrow =
     (workspaceSize.width ?? 0) > 0 && (workspaceSize.width ?? 0) < 640;
+  const readerOnly = narrow && viewing;
   const viewerActive = active && (!narrow || viewing);
 
   const limit = downloadLimit(data.settings);
@@ -606,9 +607,6 @@ export function LmsWorkspaceBody({
             <LmsIcon name="plus" />
           </button>
         </div>
-        {!isOpen && section.summaryHtml && (
-          <p className="lmsSectionPreview">{t("lms.sectionCollapsed")}</p>
-        )}
         {isOpen && (
           <div id={`lms-panel-${section.id}`} className="lmsSectionBody">
             {section.summaryHtml && (
@@ -683,12 +681,13 @@ export function LmsWorkspaceBody({
                   }
                 >
                   <FileTile family="note" />
+                  {/* The name is the note's first line; that it stays on
+                      this device is said once, in the note itself. */}
                   <span>
                     <b>
                       {note.name.trim() ||
                         `${section.title} · ${t("lms.note")}`}
                     </b>
-                    <small>{t("lms.localNoteStoredOnlyOn")}</small>
                   </span>
                   <LmsIcon name="chevron" className="lmsRowAction" />
                 </button>
@@ -729,7 +728,7 @@ export function LmsWorkspaceBody({
         >
           <aside className="lmsOutline">
             <TitleRow className="lmsWorkspaceHeader">
-              {headerStart}
+              {!readerOnly && headerStart}
               <div className="lmsCourseIdentity">
                 <h1 title={course.title}>{course.title}</h1>
                 <small>{course.code}</small>
@@ -840,7 +839,8 @@ export function LmsWorkspaceBody({
                         aria-current={
                           l.id === lessonId && paged ? "step" : undefined
                         }
-                        title={l.title}
+                        // The one-time tip fades; the tooltip keeps saying it.
+                        title={`${l.title}\n${t("lms.doubleClickALessonNumber")}`}
                         onClick={() => goLesson(l.id)}
                         onDoubleClick={() => markThisClass(l.id)}
                       >
@@ -982,9 +982,7 @@ export function LmsWorkspaceBody({
                       aria-label={t("common.exams")}
                     >
                       <h2>{t("common.exams")}</h2>
-                      <ExamCards
-                        exams={courseExams}
-                      />
+                      <ExamCards exams={courseExams} />
                     </section>
                   )}
                   {!paged && <h2>{t("syncStatus.dataset.courseContent")}</h2>}
@@ -1030,6 +1028,7 @@ export function LmsWorkspaceBody({
             <LmsReader
               opened={opened}
               shown={shown}
+              titleStart={readerOnly ? headerStart : undefined}
               viewerActive={viewerActive}
               course={course}
               locale={data.settings.locale}

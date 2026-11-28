@@ -13,6 +13,7 @@
 
 #[cfg(feature = "agent")]
 pub mod agent;
+pub mod announcements;
 pub mod app_updates;
 pub mod backup;
 #[cfg(feature = "campus-map")]
@@ -85,6 +86,7 @@ pub mod widgets;
 pub mod workspace;
 pub mod workspace_changes;
 
+#[cfg(feature = "campus-vpn")]
 pub mod vpn;
 #[cfg(feature = "desktop-workspaces")]
 pub mod workspaces;

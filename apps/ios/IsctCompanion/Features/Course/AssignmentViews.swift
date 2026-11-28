@@ -37,6 +37,19 @@ struct AssignmentScreen: View {
         .background(Theme.bg)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .toolbar {
+            // Pin and hide, as the lists' swipes do, for this quarter's work.
+            if let item = model.board?.record.item(assignmentId) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        AssignmentMarkButtons(item: item, hidden: item.hidden)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel(t("forms.moreOptions"))
+                }
+            }
+        }
         .task(id: "\(assignmentId)-\(model.contentRevision)") {
             let loaded = await model.assignmentDetail(assignmentId)
             guard !Task.isCancelled, let loaded else { return }
@@ -241,6 +254,8 @@ final class MaterialOpening {
         fallback = nil
         busy = true
         defer { busy = false }
+        notice = nil
+        retrying = false
         switch await place.model.openMaterial(courseId: course, source: source) {
         // How a file shows is Core's (`file_preview`): Markdown on a page of
         // its own, a PDF or a picture on a page with the campus printer at
@@ -302,18 +317,39 @@ private struct MaterialOpeningPresentation: ViewModifier {
         let place = MaterialPlace(model: model, push: push, openURL: openURL)
         content
             .quickLookPreview($opening.preview)
-            .alert(opening.notice ?? "", isPresented: Binding(get: { opening.notice != nil }, set: { if !$0 { opening.notice = nil } })) {
-                if let page = opening.fallback {
-                    Button(t("common.openInLMS")) { place.show(page, title: opening.title) }
+            .appNoticeFlow(opening.preview != nil)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let text = opening.notice ?? (opening.retrying ? t("lmsFile.theFileCouldNotBe") : nil) {
+                    NoticeBanner(important: true) {
+                        VStack(alignment: .leading, spacing: Theme.space4) {
+                            Text(text).font(.subheadline).foregroundStyle(Theme.ink)
+                            HStack {
+                                if opening.retrying {
+                                    Button(t("common.tryAgain")) {
+                                        opening.retrying = false
+                                        Task { await opening.retry(at: place) }
+                                    }
+                                }
+                                if let page = opening.fallback {
+                                    Button(t("common.openInLMS")) {
+                                        opening.notice = nil
+                                        opening.retrying = false
+                                        place.show(page, title: opening.title)
+                                    }
+                                }
+                                Spacer()
+                                Button {
+                                    opening.notice = nil
+                                    opening.retrying = false
+                                } label: {
+                                    Image(systemName: "xmark").accessibilityLabel(t("common.close"))
+                                }
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    .padding(.horizontal, Theme.gutter)
                 }
-                Button(t("common.cancel"), role: .cancel) {}
-            }
-            .alert(t("lmsFile.theFileCouldNotBe"), isPresented: $opening.retrying) {
-                Button(t("common.tryAgain")) { Task { await opening.retry(at: place) } }
-                if let page = opening.fallback {
-                    Button(t("common.openInLMS")) { place.show(page, title: opening.title) }
-                }
-                Button(t("common.cancel"), role: .cancel) {}
             }
     }
 }

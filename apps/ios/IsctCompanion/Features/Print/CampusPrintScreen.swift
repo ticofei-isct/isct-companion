@@ -209,7 +209,7 @@ private struct PrintSettings: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(Theme.warn)
-                Button(t("tools.campusPrinter.checkAgain"), systemImage: "arrow.clockwise") { checkRound += 1 }
+                Button(t("tools.checkAgain"), systemImage: "arrow.clockwise") { checkRound += 1 }
                     .buttonStyle(.bordered)
             }
             .padding(.vertical, 4)

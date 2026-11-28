@@ -1,5 +1,6 @@
 import IsctCore
 import SwiftUI
+import TipKit
 import UIKit
 
 /// Settings pages, pushed onto whichever page's stack opened them, as the
@@ -49,7 +50,6 @@ struct SettingsScreen: View {
     @AppStorage(SchoolBrowserHost.textScaleKey) private var textScale = 115
     @State private var firstSite = WebRouter.firstSite
     @State private var logFile: ExportFile?
-    @State private var notice: String?
 
     var body: some View {
         List {
@@ -111,6 +111,7 @@ struct SettingsScreen: View {
                                 SettingsIcon(symbol: "bubble.left.and.text.bubble.right", tint: Theme.muted)
                             }
                         }
+                        .popoverTip(FeedbackTip(), arrowEdge: .bottom)
                     }
                     if let policy = URL(string: "https://github.com/isct-companion/isct-companion/blob/main/docs/legal/PRIVACY.md") {
                         Link(destination: policy) {
@@ -139,7 +140,8 @@ struct SettingsScreen: View {
                 } header: {
                     Text(t("settings.main.about"))
                 } footer: {
-                    Text(t("settings.main.calendarEditingCourseFoldersAnd"))
+                    // Where the widgets are, once, instead of in the welcome sheet.
+                    Text(t("widget.addOnPhone"))
                 }
                 // Destructive rows last, as in the system Settings.
                 Section(t("settings.reset.group")) {
@@ -163,9 +165,7 @@ struct SettingsScreen: View {
             document: logFile, contentType: .plainText,
             defaultFilename: "IsctCompanion-logs-\(Self.today).txt"
         ) { _ in logFile = nil }
-        .alert(notice ?? "", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
-            Button("OK", role: .cancel) {}
-        }
+        .appNoticeFlow(logFile != nil)
     }
 
     /// The update check: what it found (opening the App Store), or a check
@@ -233,16 +233,16 @@ struct SettingsScreen: View {
         do {
             logFile = ExportFile(data: Data(try Self.logText().utf8))
         } catch {
-            notice = t("settings.main.exportFailedReason", ["reason": AppModel.describe(error)])
+            model.notices.show(t("settings.main.exportFailedReason", ["reason": AppModel.describe(error)]))
         }
     }
 
     private func copyLogs() {
         do {
             UIPasteboard.general.string = try Self.logText()
-            notice = t("settings.credentialImport.copied")
+            model.notices.show(t("settings.credentialImport.copied"))
         } catch {
-            notice = t("settings.otp.copyFailed")
+            model.notices.show(t("settings.otp.copyFailed"))
         }
     }
 
