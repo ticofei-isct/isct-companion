@@ -103,8 +103,12 @@ android {
             assets.directories.add("../../../resources/markdown-viewer")
         }
     }
+    // The APK is downloaded from GitHub releases, not a store that
+    // compresses it in transit, so its native libraries (Core, MapLibre,
+    // LiteRT) are stored compressed: about 45 MB raw, 20 MB deflated. The
+    // installer extracts them once, which costs that much storage instead.
     packaging {
-        jniLibs.useLegacyPackaging = false
+        jniLibs.useLegacyPackaging = true
     }
 }
 
